@@ -1,0 +1,47 @@
+name: lume_student_app
+description: "Lume Student App"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  http: ^1.6.0
+  provider: ^6.1.5+1
+  shared_preferences: ^2.5.4
+  qr_flutter: ^4.1.0
+  image_picker: ^1.1.2
+  
+  device_apps: ^2.2.0
+  url_launcher: ^6.3.0
+  local_auth: ^3.0.1
+  local_auth_android: ^2.0.5
+  local_auth_darwin: ^2.0.3
+  flutter_secure_storage: ^10.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_launcher_icons: ^0.13.1
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/logo.png
+    - assets/images/
+    - assets/logos/
+    - assets/banks/
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/logo.png"
+  min_sdk_android: 21

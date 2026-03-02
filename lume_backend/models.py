@@ -14,6 +14,8 @@ class Student(db.Model):
     email = db.Column(db.String(150))
     dob = db.Column(db.Date)
     blood_group = db.Column(db.String(5))
+    batch_start_year = db.Column(db.Integer, nullable=True)
+    batch_end_year = db.Column(db.Integer, nullable=True)
     card_issued = db.Column(db.Boolean, default=False)
     institute_status = db.Column(db.String(20), default="active")
 

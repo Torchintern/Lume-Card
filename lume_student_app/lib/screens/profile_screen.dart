@@ -19,10 +19,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   String _userRegNo = "";
   String _userPhone = "";
   String _userEmail = "";
-  String _institute = "Lume Institute";
-  String _department = "Not Specified";
-  String _dob = "Not Provided";
-  String _bloodGroup = "Not Provided";
+  String _institute = "";
+  String _department = "";
+  String _dob = "";
+  String _bloodGroup = "";
+  String _batch = "";
   String? _profileImageUrl;
 
   @override
@@ -56,16 +57,19 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         _userRegNo = student["reg_no"] ?? _userRegNo;
         _userPhone = student["mobile"] ?? _userPhone;
         _userEmail = student["email"] ?? _userEmail;
-        
-        String? dept = student["department"];
-        _department = (dept == null || dept.isEmpty || dept == "Not Specified") ? "No Dept in DB" : dept;
-        
-        String? inst = student["institute_name"];
-        _institute = (inst == null || inst.isEmpty || inst == "Lume Institute") ? "No Inst in DB" : inst;
-        
-        _dob = student["dob"] ?? _dob;
-        _bloodGroup = student["blood_group"] ?? _bloodGroup;
+        _department = student["department"] ?? "";
+        _institute = student["institute_name"] ?? "";
+        _dob = student["dob"] ?? "";
+        _bloodGroup = student["blood_group"] ?? "";
         _profileImageUrl = student["profile_image"];
+
+        final batchStart = student["batch_start_year"]?.toString() ?? "";
+        final batchEnd = student["batch_end_year"]?.toString() ?? "";
+        if (batchStart.isNotEmpty && batchEnd.isNotEmpty) {
+          _batch = "$batchStart - $batchEnd";
+        } else if (batchStart.isNotEmpty) {
+          _batch = batchStart;
+        }
       });
     }
   }
@@ -78,15 +82,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         _userRegNo = prefs.getString("user_reg_no") ?? _userRegNo;
         _userPhone = prefs.getString("user_phone") ?? _userPhone;
         _userEmail = prefs.getString("user_email") ?? _userEmail;
-        
-        String savedDept = prefs.getString("user_dept") ?? "";
-        _department = savedDept.isEmpty || savedDept == "Not Specified" ? "No Dept in DB" : savedDept;
-        
-        String savedInst = prefs.getString("user_institute") ?? "";
-        _institute = savedInst.isEmpty || savedInst == "Lume Institute" ? "No Inst in DB" : savedInst;
-        
-        _dob = prefs.getString("user_dob") ?? "Not Provided";
-        _bloodGroup = prefs.getString("user_blood_group") ?? "Not Provided";
+        _department = prefs.getString("user_dept") ?? "";
+        _institute = prefs.getString("user_institute") ?? "";
+        _dob = prefs.getString("user_dob") ?? "";
+        _bloodGroup = prefs.getString("user_blood_group") ?? "";
+        _batch = prefs.getString("user_batch") ?? "";
         _profileImageUrl = prefs.getString("user_profile_image");
       });
     }
@@ -403,17 +403,19 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
           children: [
             _buildInfoRow("Username", _userName, Icons.person_outline_rounded, colorScheme),
             _buildDivider(),
-            _buildInfoRow("Phone Number", _userPhone, Icons.phone_iphone_rounded, colorScheme),
+            _buildInfoRow("Phone Number", _userPhone.isEmpty ? "-" : _userPhone, Icons.phone_iphone_rounded, colorScheme),
             _buildDivider(),
-            _buildInfoRow("Email Address", _userEmail.isEmpty ? "Not Provided" : _userEmail, Icons.email_rounded, colorScheme),
+            _buildInfoRow("Email Address", _userEmail.isEmpty ? "-" : _userEmail, Icons.email_rounded, colorScheme),
             _buildDivider(),
-            _buildInfoRow("Department", _department, Icons.school_rounded, colorScheme),
+            _buildInfoRow("Department", _department.isEmpty ? "-" : _department, Icons.school_rounded, colorScheme),
             _buildDivider(),
-            _buildInfoRow("Institute", _institute, Icons.account_balance_rounded, colorScheme),
+            _buildInfoRow("Batch", _batch.isEmpty ? "-" : _batch, Icons.calendar_today_rounded, colorScheme),
             _buildDivider(),
-            _buildInfoRow("Date of Birth", _dob, Icons.cake_rounded, colorScheme),
+            _buildInfoRow("Institute", _institute.isEmpty ? "-" : _institute, Icons.account_balance_rounded, colorScheme),
             _buildDivider(),
-            _buildInfoRow("Blood Group", _bloodGroup, Icons.bloodtype_rounded, colorScheme),
+            _buildInfoRow("Date of Birth", _dob.isEmpty ? "-" : _dob, Icons.cake_rounded, colorScheme),
+            _buildDivider(),
+            _buildInfoRow("Blood Group", _bloodGroup.isEmpty ? "-" : _bloodGroup, Icons.bloodtype_rounded, colorScheme),
           ],
         ),
       ),

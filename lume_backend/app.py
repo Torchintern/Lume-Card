@@ -95,6 +95,8 @@ def verify_otp_route():
             "dob": str(student.dob) if student.dob else None,
             "blood_group": student.blood_group,
             "email": student.email,
+            "batch_start_year": str(student.batch_start_year) if student.batch_start_year else None,
+            "batch_end_year": str(student.batch_end_year) if student.batch_end_year else None,
             "profile_image": user.profile_image if user else None
         }
     })
@@ -139,6 +141,8 @@ def set_pin():
             "institute_name": student.institute_name,
             "dob": str(student.dob) if student.dob else None,
             "blood_group": student.blood_group,
+            "batch_start_year": str(student.batch_start_year) if student.batch_start_year else None,
+            "batch_end_year": str(student.batch_end_year) if student.batch_end_year else None,
             "profile_image": existing.profile_image if existing else None
         })
     else:
@@ -169,6 +173,8 @@ def set_pin():
             "institute_name": student.institute_name,
             "dob": str(student.dob) if student.dob else None,
             "blood_group": student.blood_group,
+            "batch_start_year": str(student.batch_start_year) if student.batch_start_year else None,
+            "batch_end_year": str(student.batch_end_year) if student.batch_end_year else None,
             "profile_image": user.profile_image if user else None
         })
 
@@ -208,6 +214,8 @@ def login_pin():
         "institute_name": (student.institute_name if student else ""),
         "dob": str(student.dob) if (student and student.dob) else None,
         "blood_group": (student.blood_group if student else None),
+        "batch_start_year": str(student.batch_start_year) if (student and student.batch_start_year) else None,
+        "batch_end_year": str(student.batch_end_year) if (student and student.batch_end_year) else None,
         "profile_image": user.profile_image if (user and user.profile_image) else None
     })
 
@@ -245,6 +253,8 @@ def get_profile():
             "institute_name": (student.institute_name if student else ""),
             "dob": str(student.dob) if (student and student.dob) else None,
             "blood_group": (student.blood_group if student else None),
+            "batch_start_year": str(student.batch_start_year) if (student and student.batch_start_year) else None,
+            "batch_end_year": str(student.batch_end_year) if (student and student.batch_end_year) else None,
             "profile_image": user.profile_image if (user and user.profile_image) else None,
             "lume_status": user.status if user else "inactive"
         }

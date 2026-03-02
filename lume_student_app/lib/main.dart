@@ -14,6 +14,7 @@ import 'screens/profile_screen.dart';
 import 'screens/scholar_screen.dart';
 import 'screens/help_support_screen.dart';
 import 'screens/app_settings_screen.dart';
+import 'screens/notification_screen.dart';
 import 'screens/about/terms_conditions_screen.dart';
 import 'screens/about/privacy_policy_screen.dart';
 import 'screens/about/about_lume_screen.dart';
@@ -171,6 +172,7 @@ class LumeApp extends StatelessWidget {
             '/terms': (context) => const TermsConditionsScreen(),
             '/privacy': (context) => const PrivacyPolicyScreen(),
             '/about': (context) => const AboutLumeScreen(),
+            '/notifications': (context) => const NotificationScreen(),
           },
         );
       },

@@ -41,6 +41,7 @@ class CampusAppPicker {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
+      enableDrag: false,
       builder: (_) => _CampusSheet(),
     );
   }

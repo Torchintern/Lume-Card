@@ -60,116 +60,110 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       backgroundColor: colorScheme.surface,
       body: Consumer<SettingsProvider>(
         builder: (context, settings, child) {
-          return CustomScrollView(
-            physics: const BouncingScrollPhysics(),
-            slivers: [
-
-              /// HEADER
-              SliverAppBar(
-                expandedHeight: size.height * 0.22,
-                pinned: true,
-                elevation: 0,
-                backgroundColor: colorScheme.primary,
-                leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                flexibleSpace: FlexibleSpaceBar(
-                  background: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [colorScheme.primary, colorScheme.secondary],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                        ),
-                      ),
-                      const Positioned(
-                        bottom: 40,
-                        left: 20,
-                        child: Text(
-                          "App Settings",
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 30,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                    ],
+          return Column(
+            children: [
+              // Fixed Premium Header
+              Container(
+                height: size.height * 0.25,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [colorScheme.primary, colorScheme.secondary],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
                 ),
-                bottom: PreferredSize(
-                  preferredSize: const Size.fromHeight(20),
-                  child: Container(
-                    height: 30,
-                    decoration: BoxDecoration(
-                      color: colorScheme.surface,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(30),
-                        topRight: Radius.circular(30),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    SafeArea(
+                      child: Stack(
+                        children: [
+                          Positioned(
+                            top: 10,
+                            left: 12,
+                            child: IconButton(
+                              icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+                              onPressed: () => Navigator.pop(context),
+                            ),
+                          ),
+                          const Positioned(
+                            bottom: 50,
+                            left: 20,
+                            child: Text(
+                              "App Settings",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 30,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ),
 
-              /// BODY
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    children: [
-
-                      _sectionTitle(context, "GENERAL"),
-
-                      _switchTile(
-                        icon: Icons.notifications_rounded,
-                        color: Colors.orange,
-                        title: "Notifications",
-                        subtitle: "Manage push notifications",
-                        value: settings.notificationsEnabled,
-                        onChanged: (v) => settings.setNotifications(v),
-                        context: context,
+              // Content Area with rounded top
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  transform: Matrix4.translationValues(0, -30, 0),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(30),
+                      topRight: Radius.circular(30),
+                    ),
+                  ),
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        children: [
+                          _sectionTitle(context, "GENERAL"),
+                          _switchTile(
+                            icon: Icons.notifications_rounded,
+                            color: Colors.orange,
+                            title: "Notifications",
+                            subtitle: "Manage push notifications",
+                            value: settings.notificationsEnabled,
+                            onChanged: (v) => settings.setNotifications(v),
+                            context: context,
+                          ),
+                          _selectorTile(
+                            icon: Icons.palette_rounded,
+                            color: Colors.purple,
+                            title: "Theme",
+                            subtitle: settings.themeModeString,
+                            onTap: () => _showThemePicker(context, settings),
+                            context: context,
+                          ),
+                          _selectorTile(
+                            icon: Icons.language_rounded,
+                            color: Colors.blue,
+                            title: "Language",
+                            subtitle: settings.language,
+                            onTap: () => _showLanguagePicker(context, settings),
+                            context: context,
+                          ),
+                          const SizedBox(height: 24),
+                          _sectionTitle(context, "SECURITY"),
+                          _switchTile(
+                            icon: Icons.lock_rounded,
+                            color: Colors.green,
+                            title: "Biometric",
+                            subtitle: "Login Using Biometric to open app",
+                            value: settings.appLockEnabled,
+                            onChanged: (v) => _handleAppLockToggle(v, settings),
+                            context: context,
+                          ),
+                          const SizedBox(height: 40),
+                        ],
                       ),
-
-                      _selectorTile(
-                        icon: Icons.palette_rounded,
-                        color: Colors.purple,
-                        title: "Theme",
-                        subtitle: settings.themeModeString,
-                        onTap: () => _showThemePicker(context, settings),
-                        context: context,
-                      ),
-
-                      _selectorTile(
-                        icon: Icons.language_rounded,
-                        color: Colors.blue,
-                        title: "Language",
-                        subtitle: settings.language,
-                        onTap: () => _showLanguagePicker(context, settings),
-                        context: context,
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      _sectionTitle(context, "SECURITY"),
-
-                      _switchTile(
-                        icon: Icons.lock_rounded,
-                        color: Colors.green,
-                        title: "App Lock",
-                        subtitle: "Require screen lock to open app",
-                        value: settings.appLockEnabled,
-                        onChanged: (v) => _handleAppLockToggle(v, settings),
-                        context: context,
-                      ),
-
-                      const SizedBox(height: 40),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -332,6 +326,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   }) {
     showModalBottomSheet(
       context: context,
+      enableDrag: false,
       backgroundColor: Colors.transparent, // Important for the rounded corners and shadow to show properly
       builder: (_) => Container(
         decoration: BoxDecoration(

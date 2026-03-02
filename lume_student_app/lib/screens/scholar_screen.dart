@@ -144,110 +144,109 @@ class _ScholarScreenState extends State<ScholarScreen> {
               ),
             ),
           ),
-          CustomScrollView(
-            physics: const BouncingScrollPhysics(),
-            slivers: [
-              SliverAppBar(
-                expandedHeight: size.height * 0.25,
-                floating: false,
-                pinned: true,
-                stretch: true,
-                elevation: 0,
-                backgroundColor: colorScheme.primary,
-                leading: IconButton(
-                  padding: const EdgeInsets.only(left: 12),
-                  icon: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.5), width: 1.5),
-                    ),
-                    child: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 20),
+          Column(
+            children: [
+              // Fixed Premium Header
+              Container(
+                height: size.height * 0.3,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [colorScheme.primary, colorScheme.secondary],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  onPressed: () => Navigator.pop(context),
                 ),
-                flexibleSpace: FlexibleSpaceBar(
-                  stretchModes: const [StretchMode.zoomBackground, StretchMode.blurBackground],
-                  background: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [colorScheme.primary, colorScheme.secondary],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        bottom: -30,
-                        right: 20,
-                        child: Icon(Icons.school_rounded, size: 120, color: Colors.white.withValues(alpha: 0.1)),
-                      ),
-                      Positioned(
-                        bottom: 40,
-                        left: 20,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(20),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Positioned(
+                      bottom: -30,
+                      right: 20,
+                      child: Icon(Icons.school_rounded, size: 120, color: Colors.white.withValues(alpha: 0.1)),
+                    ),
+                    SafeArea(
+                      child: Stack(
+                        children: [
+                          Positioned(
+                            top: 10,
+                            left: 12,
+                            child: IconButton(
+                              icon: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.2),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white.withValues(alpha: 0.5), width: 1.5),
+                                ),
+                                child: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 20),
                               ),
-                              child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 220),
-                                child: Text(
-                                  "Hey, $userName 👋",
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
+                              onPressed: () => Navigator.pop(context),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 50,
+                            left: 20,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: ConstrainedBox(
+                                    constraints: const BoxConstraints(maxWidth: 220),
+                                    child: Text(
+                                      "Hey, $userName 👋",
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
+                                const SizedBox(height: 12),
+                                const Text(
+                                  "Scholar Hub",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 32,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.5,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 12),
-                            const Text(
-                              "Scholar Hub",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 32,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -0.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                bottom: PreferredSize(
-                  preferredSize: const Size.fromHeight(20),
-                  child: Container(
-                    height: 30,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: colorScheme.surface,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(30),
-                        topRight: Radius.circular(30),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+
+              // Content Area with rounded top
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  transform: Matrix4.translationValues(0, -30, 0),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(30),
+                      topRight: Radius.circular(30),
+                    ),
+                  ),
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
             // ================= COLORFUL AUTO TYPING TEXT =================
             SizedBox(
             height: 160,
@@ -339,11 +338,13 @@ class _ScholarScreenState extends State<ScholarScreen> {
             setState(() {});
           },
         ),
-                  ],
+                        const SizedBox(height: 40),
+                      ],
+                    ),
                   ),
                 ),
               ),
-              const SliverToBoxAdapter(child: SizedBox(height: 40)),
+              ),
             ],
           ),
         ],
@@ -754,7 +755,7 @@ bool get canCreateNewApplication {
                     final result = await showModalBottomSheet<bool>(
                       context: context,
                       isScrollControlled: true,
-                      enableDrag: true,
+                      enableDrag: false,
                       backgroundColor: Colors.transparent,
                       builder: (_) => const _CreateApplicationSheet(),
                     );

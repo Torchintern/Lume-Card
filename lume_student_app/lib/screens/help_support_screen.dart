@@ -144,12 +144,12 @@ class HelpSupportScreen extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(Icons.chat_bubble_outline_rounded,
-                                size: 60, color: Colors.grey.shade400),
+                                size: 60, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
                             const SizedBox(height: 16),
                             Text(
                               "Chatbot will appear here",
                               style: TextStyle(
-                                color: Colors.grey.shade600,
+                                color: colorScheme.onSurface,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -157,7 +157,7 @@ class HelpSupportScreen extends StatelessWidget {
                             Text(
                               "You will connect NITA here later",
                               style: TextStyle(
-                                color: Colors.grey.shade400,
+                                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
                                 fontSize: 13,
                               ),
                             ),

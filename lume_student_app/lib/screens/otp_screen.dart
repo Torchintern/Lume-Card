@@ -336,11 +336,10 @@ class _OTPScreenState extends State<OTPScreen> with SingleTickerProviderStateMix
                                 hintText: "------",
                                 hintStyle: TextStyle(
                                   fontSize: 24,
-                                  color: colorScheme.onSurfaceVariant.withOpacity(0.5),
+                                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                                   letterSpacing: 8.0,
                                 ),
-                                filled: true,
-                                fillColor: colorScheme.onSurface.withOpacity(0.05),
+                                fillColor: colorScheme.onSurface.withValues(alpha: 0.05),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(16),
                                   borderSide: BorderSide.none,
@@ -418,7 +417,7 @@ class _OTPScreenState extends State<OTPScreen> with SingleTickerProviderStateMix
                                 : Text(
                                     "Resend OTP in ${_timerSeconds}s",
                                     style: TextStyle(
-                                      color: colorScheme.onSurface.withOpacity(0.5),
+                                      color: colorScheme.onSurface.withValues(alpha: 0.5),
                                       fontWeight: FontWeight.w500,
                                     ),
                                   ),

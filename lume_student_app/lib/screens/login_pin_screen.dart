@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 import '../services/api_service.dart';
 import '../providers/settings_provider.dart';
@@ -196,12 +197,30 @@ class _LoginPinScreenState extends State<LoginPinScreen> with SingleTickerProvid
           );
         }
       }
+    } on PlatformException catch (e) {
+      debugPrint("Biometric platform error: ${e.code} - ${e.message}");
+      // Suppress SnackBar for any cancellation or in-progress error
+      final code = e.code.toLowerCase();
+      if (code.contains('cancel') || code.contains('notavailable') || code == 'auth_in_progress') {
+        return;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Authentication Error: ${e.message ?? e.code}"),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
     } catch (e) {
       debugPrint("Biometric error detail: $e");
+      final errorStr = e.toString().toLowerCase();
+      if (errorStr.contains('cancel')) return;
+      
       if (mounted) {
         String errorMsg = e.toString();
         if (errorMsg.contains("NotAvailable")) {
-          errorMsg = "Biometrics not available or not set up on this device.";
+          return; // Already handled by string check but being safe here
         }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -260,10 +279,10 @@ class _LoginPinScreenState extends State<LoginPinScreen> with SingleTickerProvid
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.1),
+                            color: Colors.white.withValues(alpha: 0.1),
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: Colors.white.withOpacity(0.3),
+                              color: Colors.white.withValues(alpha: 0.3),
                               width: 1.5,
                             ),
                           ),
@@ -291,7 +310,7 @@ class _LoginPinScreenState extends State<LoginPinScreen> with SingleTickerProvid
                             "Enter your secure PIN to login",
                             style: TextStyle(
                               fontSize: 16,
-                              color: Colors.white.withOpacity(0.9),
+                              color: Colors.white.withValues(alpha: 0.9),
                             ),
                           ),
                         ],
@@ -309,7 +328,7 @@ class _LoginPinScreenState extends State<LoginPinScreen> with SingleTickerProvid
                       position: _slideAnimation,
                       child: Card(
                         elevation: 8,
-                        shadowColor: Colors.black.withOpacity(0.1),
+                        shadowColor: Colors.black.withValues(alpha: 0.1),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(24),
                         ),
@@ -334,7 +353,7 @@ class _LoginPinScreenState extends State<LoginPinScreen> with SingleTickerProvid
                                   boxShadow: [
                                     if (pinFocusNode.hasFocus)
                                       BoxShadow(
-                                        color: colorScheme.primary.withOpacity(0.2),
+                                        color: colorScheme.primary.withValues(alpha: 0.2),
                                         blurRadius: 10,
                                         spreadRadius: 2,
                                       )
@@ -358,11 +377,11 @@ class _LoginPinScreenState extends State<LoginPinScreen> with SingleTickerProvid
                                     hintText: "••••••",
                                     hintStyle: TextStyle(
                                       fontSize: 28,
-                                      color: Colors.grey.shade400,
+                                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                                       letterSpacing: 16.0,
                                     ),
                                     filled: true,
-                                    fillColor: colorScheme.onSurface.withOpacity(0.05),
+                                    fillColor: colorScheme.onSurface.withValues(alpha: 0.05),
                                     border: OutlineInputBorder(
                                       borderRadius: BorderRadius.circular(16),
                                       borderSide: BorderSide.none,
@@ -435,9 +454,9 @@ class _LoginPinScreenState extends State<LoginPinScreen> with SingleTickerProvid
                                     child: Container(
                                       padding: const EdgeInsets.all(16),
                                       decoration: BoxDecoration(
-                                        color: colorScheme.primary.withOpacity(0.1),
+                                        color: colorScheme.primary.withValues(alpha: 0.1),
                                         shape: BoxShape.circle,
-                                        border: Border.all(color: colorScheme.primary.withOpacity(0.3)),
+                                        border: Border.all(color: colorScheme.primary.withValues(alpha: 0.3)),
                                       ),
                                       child: Icon(
                                         Icons.fingerprint_rounded,

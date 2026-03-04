@@ -376,13 +376,13 @@ class _ScholarStatCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(28),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 24,
             offset: const Offset(0, 8),
           ),
         ],
         border: Border.all(
-          color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.5), 
+          color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5), 
         ),
       ),
 
@@ -512,12 +512,12 @@ class _LendingTableState extends State<_LendingTable> {
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withValues(alpha: 0.05),
               blurRadius: 24,
               offset: const Offset(0, 8),
             ),
           ],
-          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.5)),
+          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5)),
         ),
         child: Column(
           children: [
@@ -588,19 +588,20 @@ class _LendingTableState extends State<_LendingTable> {
 class _TableHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFFB3DBFF),
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer.withValues(alpha: 0.8),
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Row(
         children: [
-          Expanded(flex: 3, child: Text("Bank Name", style: TextStyle(fontWeight: FontWeight.w600, color: Colors.blue.shade900))),
-          Expanded(child: Text("Loan Amount", style: TextStyle(color: Colors.blue.shade900))),
-          Expanded(child: Text("Interest", style: TextStyle(color: Colors.blue.shade900))),
-          Expanded(child: Text("Processing Time", style: TextStyle(color: Colors.blue.shade900))),
-          Expanded(child: Text("Processing Fee", style: TextStyle(color: Colors.blue.shade900))),
+          Expanded(flex: 3, child: Text("Bank Name", style: TextStyle(fontWeight: FontWeight.w600, color: colorScheme.onPrimaryContainer))),
+          Expanded(child: Text("Loan Amount", style: TextStyle(color: colorScheme.onPrimaryContainer))),
+          Expanded(child: Text("Interest", style: TextStyle(color: colorScheme.onPrimaryContainer))),
+          Expanded(child: Text("Processing Time", style: TextStyle(color: colorScheme.onPrimaryContainer))),
+          Expanded(child: Text("Processing Fee", style: TextStyle(color: colorScheme.onPrimaryContainer))),
         ],
       ),
     );
@@ -627,10 +628,11 @@ class _LendingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       color: highlighted 
-          ? (Theme.of(context).brightness == Brightness.dark ? Colors.blue.withOpacity(0.2) : const Color(0xFFD1FAE5))
-          : Theme.of(context).colorScheme.surface,
+          ? colorScheme.secondaryContainer
+          : colorScheme.surface,
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
       child: Row(
         children: [
@@ -650,9 +652,9 @@ class _LendingRow extends StatelessWidget {
                Flexible(
               child: Text(
                 name,
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF2563EB), 
+                  color: colorScheme.primary, 
                 ),
               ),
             ),
@@ -691,33 +693,35 @@ bool get canCreateNewApplication {
 }
 
 
-  Widget _buildStatusText() {
-  if (!hasApplication) {
-    return const Text(
-      "No application found. Please apply.",
-      style: TextStyle(color: Colors.grey),
-    );
-  }
+  Widget _buildStatusText(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    if (!hasApplication) {
+      return Text(
+        "No application found. Please apply.",
+        style: TextStyle(color: colorScheme.onSurfaceVariant),
+      );
+    }
 
-  if (applicationStatus == "pending") {
-    return const Text(
-      "Application under review",
-      style: TextStyle(
-        color: Colors.orange,
-        fontWeight: FontWeight.w600,
-      ),
-    );
-  }
+    if (applicationStatus == "pending") {
+      return Text(
+        "Application under review",
+        style: TextStyle(
+          color: isDark ? Colors.orangeAccent : Colors.orange,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
 
-  if (applicationStatus == "completed") {
-    return const Text(
-      "Application Reviewed. You can apply again.",
-      style: TextStyle(
-        color: Colors.green,
-        fontWeight: FontWeight.w600,
-      ),
-    );
-  }
+    if (applicationStatus == "completed") {
+      return Text(
+        "Application Reviewed. You can apply again.",
+        style: TextStyle(
+          color: colorScheme.primary,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
 
   return const SizedBox.shrink();
 }
@@ -725,13 +729,14 @@ bool get canCreateNewApplication {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.5)),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -769,7 +774,7 @@ bool get canCreateNewApplication {
                 : null,
             style: ElevatedButton.styleFrom(
             elevation: 0,
-            backgroundColor: const Color(0xFF2563EB),
+            backgroundColor: colorScheme.primary,
             foregroundColor: Colors.white,           
             disabledForegroundColor: Colors.white70,  
             disabledBackgroundColor: Colors.grey.shade300,
@@ -799,7 +804,7 @@ bool get canCreateNewApplication {
           const SizedBox(height: 10),
           Align(
             alignment: Alignment.center,
-            child: _buildStatusText(),
+            child: _buildStatusText(context),
           ),
         ],
       ),
@@ -985,6 +990,7 @@ Future<bool?> _showSuccessDialog(BuildContext context) {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       height: MediaQuery.of(context).size.height * 0.9,
@@ -1028,7 +1034,7 @@ Future<bool?> _showSuccessDialog(BuildContext context) {
           Container(
   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
   decoration: BoxDecoration(
-    color: isDark ? const Color(0xFF334155) : const Color(0xFFFFF3C4),
+    color: isDark ? colorScheme.surfaceContainerHighest : colorScheme.primaryContainer.withValues(alpha: 0.3),
     borderRadius: BorderRadius.circular(8),
   ),
   child: Row(
@@ -1222,7 +1228,11 @@ Future<bool?> _showSuccessDialog(BuildContext context) {
                   } else {
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Something went wrong")),
+                      SnackBar(
+                        content: const Text("Something went wrong"),
+                        backgroundColor: colorScheme.error,
+                        behavior: SnackBarBehavior.floating,
+                      ),
                     );
                   }
                 }

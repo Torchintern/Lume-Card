@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 import '../providers/settings_provider.dart';
 
@@ -30,19 +31,27 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         if (didAuthenticate) {
           await settings.setAppLock(value);
         } else {
-          // Revert or show message if needed. Switches usually stay at old value if we don't call setState or notify.
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Authentication failed")),
-            );
-          }
+          // Silent on cancel (didAuthenticate is false when user cancels)
+          return;
         }
       } else {
         // Fallback for devices without bio/pin (though unlikely for pin)
         await settings.setAppLock(value);
       }
+    } on PlatformException catch (e) {
+      debugPrint("Auth platform error: ${e.code} - ${e.message}");
+      final code = e.code.toLowerCase();
+      if (code.contains('cancel') || code.contains('notavailable') || code == 'auth_in_progress') {
+        return;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: ${e.message ?? e.code}")),
+        );
+      }
     } catch (e) {
       debugPrint("Auth error: $e");
+      if (e.toString().toLowerCase().contains('cancel')) return;
       if (mounted) {
          ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text("Error: ${e.toString()}")),
@@ -186,7 +195,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           text,
           style: TextStyle(
             fontWeight: FontWeight.w800,
-            color: colorScheme.onSurfaceVariant.withOpacity(0.7),
+            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
             letterSpacing: 1.1,
           ),
         ),
@@ -231,7 +240,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       color,
       title,
       subtitle,
-      Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400),
+      Icon(Icons.chevron_right_rounded, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
       onTap: onTap,
       context: context,
     );
@@ -334,7 +343,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.1),
+              color: Colors.black.withValues(alpha: 0.1),
               blurRadius: 20,
               offset: const Offset(0, -5),
             )
@@ -349,7 +358,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey.shade300,
+                color: Theme.of(context).colorScheme.outlineVariant,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -387,7 +396,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                   onSelect(e);
                 },
               );
-            }).toList(),
+            }),
             const SizedBox(height: 24), // Bottom padding safe area
           ],
         ),

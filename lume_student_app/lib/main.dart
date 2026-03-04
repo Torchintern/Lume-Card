@@ -18,6 +18,7 @@ import 'screens/notification_screen.dart';
 import 'screens/about/terms_conditions_screen.dart';
 import 'screens/about/privacy_policy_screen.dart';
 import 'screens/about/about_lume_screen.dart';
+import 'screens/kyc_form_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -173,6 +174,7 @@ class LumeApp extends StatelessWidget {
             '/privacy': (context) => const PrivacyPolicyScreen(),
             '/about': (context) => const AboutLumeScreen(),
             '/notifications': (context) => const NotificationScreen(),
+            '/kyc': (context) => const KycFormScreen(),
           },
         );
       },

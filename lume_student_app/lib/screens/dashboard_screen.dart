@@ -55,6 +55,12 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   String? _profileImageUrl;
   bool _isUploading = false;
   String _lumeStatus = "Inactive";
+  String _kycStatus = "Pending";
+  String? _kycSlotDate;
+  String? _kycSlotTime;
+  bool _isTermsAccepted = false;
+  String? _kycRemarks;
+  int? _studentId;
   
   // Weather & Greeting State
   String _weatherTemp = "--°C";
@@ -133,6 +139,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   Future<void> _loadUserProfile() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      _kycSlotDate = prefs.getString("kyc_slot_date");
+      _kycSlotTime = prefs.getString("kyc_slot_time");
+      if (mounted) setState(() {});
+
       final token = prefs.getString("auth_token");
       if (token != null && token.isNotEmpty) {
         final res = await ApiService.getProfile(token);
@@ -149,6 +159,21 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             _userDob = student["dob"] ?? "";
             _userBloodGroup = student["blood_group"] ?? "";
             _lumeStatus = (student["lume_status"] ?? "inactive").toString().toLowerCase();
+            _kycStatus = (student["kyc_status"] ?? "Pending").toString();
+            _kycRemarks = student["kyc_remarks"] ?? student["remarks"];
+            _studentId = student["id"];
+            
+            // Extract slot info if available
+            if (student["kyc_slot"] != null) {
+              _kycSlotDate = student["kyc_slot"]["date"];
+              _kycSlotTime = student["kyc_slot"]["time"];
+            } else if (student["slot_date"] != null) {
+              _kycSlotDate = student["slot_date"]; 
+              _kycSlotTime = student["slot_time"];
+            } else if (student["kyc_date"] != null) {
+              _kycSlotDate = student["kyc_date"];
+              _kycSlotTime = student["kyc_time"];
+            }
 
             // Build batch string from DB years
             final batchStart = student["batch_start_year"]?.toString() ?? "";
@@ -166,7 +191,24 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             }
           });
 
-          // Save AFTER setState
+          if (_studentId != null && (_kycStatus.toLowerCase() == "rejected" || _kycStatus.toLowerCase() == "booked" || _kycStatus.toLowerCase() == "under process")) {
+          try {
+            final kycRes = await ApiService.getKycStatus(_studentId!);
+            if (kycRes != null && kycRes is Map) {
+              setState(() {
+                _kycRemarks = kycRes["remarks"];
+                if (kycRes["slot_date"] != null) _kycSlotDate = kycRes["slot_date"];
+                if (kycRes["slot_time"] != null) _kycSlotTime = kycRes["slot_time"];
+                if (kycRes["date"] != null) _kycSlotDate = kycRes["date"];
+                if (kycRes["time"] != null) _kycSlotTime = kycRes["time"];
+              });
+            }
+          } catch (e) {
+            debugPrint("Error loading KYC status: $e");
+          }
+        }
+
+        // Save AFTER setState
           if (serverImage != null && serverImage.isNotEmpty) {
             await prefs.setString("user_profile_image", serverImage);
           } else {
@@ -182,6 +224,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           await prefs.setString("user_blood_group", _userBloodGroup);
           await prefs.setString("user_batch", _userBatch);
           await prefs.setString("lume_status", _lumeStatus);
+          if (_kycSlotDate != null) await prefs.setString("kyc_slot_date", _kycSlotDate!);
+          if (_kycSlotTime != null) await prefs.setString("kyc_slot_time", _kycSlotTime!);
+          if (_studentId != null) await prefs.setInt("student_id", _studentId!);
           if (_profileImageUrl != null) await prefs.setString("user_profile_image", _profileImageUrl!);
         }
       }
@@ -189,6 +234,58 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       debugPrint("Error loading profile: $e");
     }
     if (mounted) setState(() {});
+  }
+
+  bool _isSlotTimeReached() {
+    if (_kycSlotDate == null || _kycSlotTime == null) return false;
+
+    try {
+      final now = DateTime.now();
+      
+      // Parse Date (YYYY-MM-DD)
+      List<String> dateParts = _kycSlotDate!.split('-');
+      if (dateParts.length != 3) return false;
+      
+      int year, month, day;
+      if (dateParts[0].length == 4) {
+        year = int.parse(dateParts[0]);
+        month = int.parse(dateParts[1]);
+        day = int.parse(dateParts[2]);
+      } else {
+        day = int.parse(dateParts[0]);
+        month = int.parse(dateParts[1]);
+        year = int.parse(dateParts[2]);
+      }
+
+      // Parse Time (Assuming "HH:mm AM/PM" or "HH:mm")
+      String timeStr = _kycSlotTime!.toUpperCase().replaceAll(" ", "");
+      int hour = 0;
+      int minute = 0;
+
+      if (timeStr.contains("AM") || timeStr.contains("PM")) {
+        bool isPm = timeStr.contains("PM");
+        String cleanTime = timeStr.replaceAll("AM", "").replaceAll("PM", "");
+        final timeParts = cleanTime.split(':');
+        if (timeParts.length < 2) return false;
+        hour = int.parse(timeParts[0]);
+        minute = int.parse(timeParts[1]);
+        
+        if (isPm && hour != 12) hour += 12;
+        if (!isPm && hour == 12) hour = 0;
+      } else {
+        final timeParts = timeStr.split(':');
+        if (timeParts.length < 2) return false;
+        hour = int.parse(timeParts[0]);
+        minute = int.parse(timeParts[1]);
+      }
+
+      final slotDateTime = DateTime(year, month, day, hour, minute);
+      // Strict activation: now must be after or equal to slot time
+      return now.isAfter(slotDateTime) || now.isAtSameMomentAs(slotDateTime);
+    } catch (e) {
+      debugPrint("Time parsing error: $e");
+      return false;
+    }
   }
 
   @override
@@ -201,72 +298,70 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   }
 
   void _showImageOptions() {
-  showModalBottomSheet(
-    context: context,
-    enableDrag: false,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-    ),
-    builder: (_) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-
-          const SizedBox(height: 12),
-
-          Container(
-            height: 4,
-            width: 40,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade400,
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          const Text(
-            "Profile Photo",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-          ),
-
-          const SizedBox(height: 10),
-
-          ListTile(
-            leading: const Icon(Icons.camera_alt, color: Colors.blue),
-            title: const Text("Take Photo"),
-            onTap: () {
-              Navigator.pop(context);
-              _handleImage(ImageSource.camera);
-            },
-          ),
-
-          ListTile(
-            leading: const Icon(Icons.photo_library, color: Colors.blue),
-            title: const Text("Upload from Gallery"),
-            onTap: () {
-              Navigator.pop(context);
-              _handleImage(ImageSource.gallery);
-            },
-          ),
-
-          ListTile(
-            leading: const Icon(Icons.delete, color: Colors.red),
-            title: const Text("Remove Photo"),
-            onTap: () {
-              Navigator.pop(context);
-              _removeProfilePhoto();
-            },
-          ),
-
-          const SizedBox(height: 12),
-        ],
+    final colorScheme = Theme.of(context).colorScheme;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colorScheme.surface,
+      enableDrag: false,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-    ),
-  );
-}
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              height: 4,
+              width: 40,
+              decoration: BoxDecoration(
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              "Profile Photo",
+              style: TextStyle(
+                fontSize: 16, 
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 10),
+            ListTile(
+              leading: Icon(Icons.camera_alt, color: colorScheme.primary),
+              title: Text("Take Photo", style: TextStyle(color: colorScheme.onSurface)),
+              onTap: () {
+                Navigator.pop(context);
+                _handleImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.photo_library, color: colorScheme.primary),
+              title: Text("Upload from Gallery", style: TextStyle(color: colorScheme.onSurface)),
+              onTap: () {
+                Navigator.pop(context);
+                _handleImage(ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete, color: Colors.redAccent),
+              title: const Text("Remove Photo", style: TextStyle(color: Colors.redAccent)),
+              onTap: () {
+                Navigator.pop(context);
+                _removeProfilePhoto();
+              },
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
 
 Future<void> _handleImage(ImageSource source) async {
+  final colorScheme = Theme.of(context).colorScheme;
   final picker = ImagePicker();
   final picked = await picker.pickImage(source: source, imageQuality: 75);
 
@@ -293,14 +388,20 @@ Future<void> _handleImage(ImageSource source) async {
     }
   } catch (e) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text("Upload failed: $e")));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("Upload failed: $e"),
+        backgroundColor: colorScheme.error,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   setState(() => _isUploading = false);
 }
 
 Future<void> _removeProfilePhoto() async {
+  final colorScheme = Theme.of(context).colorScheme;
   final prefs = await SharedPreferences.getInstance();
   final token = prefs.getString("auth_token");
 
@@ -317,8 +418,13 @@ Future<void> _removeProfilePhoto() async {
 
   } catch (e) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text("Failed to remove image")));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text("Failed to remove image"),
+        backgroundColor: colorScheme.error,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 }
 
@@ -418,26 +524,35 @@ Future<void> _removeProfilePhoto() async {
     late IconData statusIcon;
     late String statusText;
 
-    switch (_lumeStatus.toLowerCase()) {
-      case "active":
-        statusColor = const Color(0xFF10B981);
+    switch (_kycStatus.toLowerCase()) {
+      case "completed":
+      case "verified":
+        statusColor = const Color(0xFF10B981); // Emerald Green
         bgColor = const Color(0xFFECFDF5);
         statusIcon = Icons.check_circle_rounded;
-        statusText = "Active";
+        statusText = "KYC Verified";
         break;
 
-      case "blocked":
-        statusColor = Colors.orange;
-        bgColor = const Color(0xFFFFF7ED);
-        statusIcon = Icons.warning_rounded;
-        statusText = "Blocked";
+      case "booked":
+      case "under process":
+        statusColor = const Color(0xFF3B82F6); // Lume Blue
+        bgColor = const Color(0xFFEFF6FF);
+        statusIcon = Icons.event_available_rounded;
+        statusText = "KYC Booked";
+        break;
+
+      case "rejected":
+        statusColor = Colors.redAccent;
+        bgColor = const Color(0xFFFEF2F2);
+        statusIcon = Icons.error_outline_rounded;
+        statusText = "KYC Rejected";
         break;
 
       default:
-        statusColor = Colors.redAccent;
-        bgColor = const Color(0xFFFEF2F2);
-        statusIcon = Icons.cancel_rounded;
-        statusText = "Inactive";
+        statusColor = Colors.orange;
+        bgColor = const Color(0xFFFFF7ED);
+        statusIcon = Icons.pending_actions_rounded;
+        statusText = "KYC Pending";
     }
 
 
@@ -457,7 +572,7 @@ Future<void> _removeProfilePhoto() async {
             padding: const EdgeInsets.fromLTRB(24, 60, 24, 24),
             decoration: BoxDecoration(
               color: colorScheme.surface,
-              border: Border(bottom: BorderSide(color: colorScheme.outlineVariant.withOpacity(0.5))),
+              border: Border(bottom: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5))),
             ),
             child: Column(
               children: [
@@ -469,7 +584,7 @@ Future<void> _removeProfilePhoto() async {
                         width: 90,
                         height: 90,
                         decoration: BoxDecoration(
-                          color: colorScheme.primary.withOpacity(0.1), // Light version of primary
+                          color: colorScheme.primary.withValues(alpha: 0.1), // Light version of primary
                           shape: BoxShape.circle,
                           image: _profileImageUrl != null && _profileImageUrl!.isNotEmpty 
                             ? DecorationImage(
@@ -702,7 +817,7 @@ Future<void> _removeProfilePhoto() async {
       leading: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: iconColor.withOpacity(0.12),
+          color: iconColor.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Icon(icon, color: iconColor, size: 22),
@@ -727,10 +842,30 @@ Future<void> _removeProfilePhoto() async {
   Widget _buildFlippingCard(BuildContext context, ColorScheme colorScheme) {
     return Center(
       child: GestureDetector(
-        onTap: () {
+        onTap: () async {
+          if (_kycStatus != "Completed") {
+            await Navigator.pushNamed(context, "/kyc");
+            if (!context.mounted) return;
+            final currentColorScheme = Theme.of(context).colorScheme;
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text("Complete KYC to activate your card"),
+                backgroundColor: currentColorScheme.primary,
+                behavior: SnackBarBehavior.floating,
+                action: SnackBarAction(
+                  label: "OK",
+                  textColor: colorScheme.onPrimary,
+                  onPressed: () {},
+                ),
+              ),
+            );
+            return;
+          }
           setState(() {
             _isCardFlipped = !_isCardFlipped;
           });
+
           if (_isCardFlipped) {
             _flipController.forward();
           } else {
@@ -782,7 +917,7 @@ Future<void> _removeProfilePhoto() async {
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.5),
+            color: Colors.black.withValues(alpha: 0.5),
             blurRadius: 25,
             offset: const Offset(0, 15),
           ),
@@ -807,9 +942,9 @@ Future<void> _removeProfilePhoto() async {
                 borderRadius: BorderRadius.circular(24),
                 gradient: LinearGradient(
                   colors: [
-                    Colors.white.withOpacity(0.1),
+                    Colors.white.withValues(alpha: 0.1),
                     Colors.transparent,
-                    Colors.black.withOpacity(0.1),
+                    Colors.black.withValues(alpha: 0.1),
                   ],
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
@@ -895,7 +1030,7 @@ Future<void> _removeProfilePhoto() async {
                       Text(
                         "STUDENT EXCLUSIVE",
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.5),
+                          color: Colors.white.withValues(alpha: 0.5),
                           fontSize: 10,
                           fontWeight: FontWeight.w800,
                           letterSpacing: 2.0,
@@ -959,7 +1094,7 @@ Future<void> _removeProfilePhoto() async {
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.3),
+            color: Colors.black.withValues(alpha: 0.3),
             blurRadius: 25,
             offset: const Offset(0, 15),
           ),
@@ -1030,7 +1165,7 @@ Future<void> _removeProfilePhoto() async {
                       style: TextStyle(
                         fontSize: 9,
                         fontWeight: FontWeight.w700,
-                        color: const Color(0xFF1A1A2E).withOpacity(0.7),
+                        color: const Color(0xFF1A1A2E).withValues(alpha: 0.7),
                         letterSpacing: 0.1,
                       ),
                       maxLines: 2,
@@ -1171,8 +1306,8 @@ Future<void> _removeProfilePhoto() async {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            const Color(0xFFE8820C).withOpacity(0.5),
-            const Color(0xFFE8820C).withOpacity(0.1),
+            const Color(0xFFE8820C).withValues(alpha: 0.5),
+            const Color(0xFFE8820C).withValues(alpha: 0.1),
             Colors.transparent,
           ],
         ),
@@ -1189,7 +1324,7 @@ Future<void> _removeProfilePhoto() async {
           style: TextStyle(
             fontSize: 8,
             fontWeight: FontWeight.w800,
-            color: const Color(0xFF1A1A2E).withOpacity(0.5),
+            color: const Color(0xFF1A1A2E).withValues(alpha: 0.5),
             letterSpacing: 0.5,
           ),
         ),
@@ -1217,12 +1352,12 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: -20,
               right: -20,
-              child: Icon(Icons.wb_sunny_rounded, size: 200, color: Colors.white.withOpacity(0.15)),
+              child: Icon(Icons.wb_sunny_rounded, size: 200, color: Colors.white.withValues(alpha: 0.15)),
             ),
             Positioned(
               top: 40,
               left: 20,
-              child: Icon(Icons.wb_sunny_rounded, size: 100, color: Colors.white.withOpacity(0.08)),
+              child: Icon(Icons.wb_sunny_rounded, size: 100, color: Colors.white.withValues(alpha: 0.08)),
             ),
           ],
         );
@@ -1232,12 +1367,12 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: 20,
               right: 20,
-              child: Icon(Icons.cloud_rounded, size: 180, color: Colors.white.withOpacity(0.12)),
+              child: Icon(Icons.cloud_rounded, size: 180, color: Colors.white.withValues(alpha: 0.12)),
             ),
             Positioned(
               bottom: 40,
               left: -30,
-              child: Icon(Icons.cloud_rounded, size: 140, color: Colors.white.withOpacity(0.08)),
+              child: Icon(Icons.cloud_rounded, size: 140, color: Colors.white.withValues(alpha: 0.08)),
             ),
           ],
         );
@@ -1247,12 +1382,12 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: 0,
               right: 40,
-              child: Icon(Icons.umbrella_rounded, size: 160, color: Colors.white.withOpacity(0.1)),
+              child: Icon(Icons.umbrella_rounded, size: 160, color: Colors.white.withValues(alpha: 0.1)),
             ),
             ...List.generate(15, (index) => Positioned(
               top: (index * 20) % 200,
               left: (index * 30) % 400,
-              child: Icon(Icons.water_drop_rounded, size: 12, color: Colors.white.withOpacity(0.15)),
+              child: Icon(Icons.water_drop_rounded, size: 12, color: Colors.white.withValues(alpha: 0.15)),
             )),
           ],
         );
@@ -1262,12 +1397,12 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: 10,
               right: 30,
-              child: Icon(Icons.nightlight_round, size: 120, color: Colors.white.withOpacity(0.15)),
+              child: Icon(Icons.nightlight_round, size: 120, color: Colors.white.withValues(alpha: 0.15)),
             ),
             ...List.generate(20, (index) => Positioned(
               top: (index * 15) % 250.0,
               left: (index * 25) % 450.0,
-              child: Icon(Icons.star_rounded, size: 8, color: Colors.white.withOpacity(0.2)),
+              child: Icon(Icons.star_rounded, size: 8, color: Colors.white.withValues(alpha: 0.2)),
             )),
           ],
         );
@@ -1296,7 +1431,7 @@ Future<void> _removeProfilePhoto() async {
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      colorScheme.secondary.withOpacity(0.4),
+                      colorScheme.secondary.withValues(alpha: 0.4),
                       Colors.transparent,
                     ],
                   ),
@@ -1342,9 +1477,9 @@ Future<void> _removeProfilePhoto() async {
                                 icon: Container(
                                   padding: const EdgeInsets.all(2),
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.2),
+                                    color: Colors.white.withValues(alpha: 0.2),
                                     shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white.withOpacity(0.5), width: 1.5),
+                                    border: Border.all(color: Colors.white.withValues(alpha: 0.5), width: 1.5),
                                   ),
                                   child: CircleAvatar(
                                     key: ValueKey(_profileImageUrl),
@@ -1394,7 +1529,7 @@ Future<void> _removeProfilePhoto() async {
                                   Text(
                                     "${_getGreeting()} ${_weatherThemes[_currentCondition]!.greetingSuffix}",
                                     style: TextStyle(
-                                      color: Colors.white.withOpacity(0.9),
+                                      color: Colors.white.withValues(alpha: 0.9),
                                       fontSize: 14,
                                       fontWeight: FontWeight.w600,
                                       letterSpacing: 0.2,
@@ -1415,13 +1550,13 @@ Future<void> _removeProfilePhoto() async {
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                     decoration: BoxDecoration(
-                                      color: Colors.black.withOpacity(0.1),
+                                      color: Colors.black.withValues(alpha: 0.1),
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Text(
                                       _getFormattedDate(),
                                       style: TextStyle(
-                                        color: Colors.white.withOpacity(0.8),
+                                        color: Colors.white.withValues(alpha: 0.8),
                                         fontSize: 11,
                                         fontWeight: FontWeight.w500,
                                       ),
@@ -1439,10 +1574,10 @@ Future<void> _removeProfilePhoto() async {
                                 child: Container(
                                   padding: const EdgeInsets.all(14),
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.12),
+                                    color: Colors.white.withValues(alpha: 0.12),
                                     borderRadius: BorderRadius.circular(24),
                                     border: Border.all(
-                                      color: Colors.white.withOpacity(0.2),
+                                      color: Colors.white.withValues(alpha: 0.2),
                                       width: 1.2,
                                     ),
                                   ),
@@ -1463,7 +1598,7 @@ Future<void> _removeProfilePhoto() async {
                                       Text(
                                         _weatherDesc.toUpperCase(),
                                         style: TextStyle(
-                                          color: Colors.white.withOpacity(0.7),
+                                          color: Colors.white.withValues(alpha: 0.7),
                                           fontSize: 9,
                                           fontWeight: FontWeight.w600,
                                         ),
@@ -1492,7 +1627,7 @@ Future<void> _removeProfilePhoto() async {
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
+                        color: Colors.black.withValues(alpha: 0.05),
                         blurRadius: 10,
                         offset: const Offset(0, -5),
                       ),
@@ -1503,7 +1638,7 @@ Future<void> _removeProfilePhoto() async {
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                     indicator: BoxDecoration(
                       borderRadius: BorderRadius.circular(16),
-                      color: colorScheme.primary.withOpacity(0.1),
+                      color: colorScheme.primary.withValues(alpha: 0.1),
                     ),
                     indicatorSize: TabBarIndicatorSize.tab,
                     dividerColor: Colors.transparent,
@@ -1544,189 +1679,631 @@ Future<void> _removeProfilePhoto() async {
   }
 
   Widget _buildHomeTab(BuildContext context, ColorScheme colorScheme) {
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
+    return Center(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Icon(
+            Icons.construction_rounded,
+            size: 64,
+            color: colorScheme.primary.withValues(alpha: 0.3),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            "Coming Soon",
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            child: Text(
+              "We're working on something exciting for your Home hub!",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colorScheme.onSurface.withValues(alpha: 0.4),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildKYCPendingView(BuildContext context, ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    return Stack(
+      children: [
+        SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(24, 10, 24, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
+              const SizedBox(height: 10),
               Text(
-                "Your Hub",
+                "Empower your digital journey with LUME",
                 style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  color: colorScheme.onSurface.withValues(alpha: 0.6),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                "Know Your Customer",
+                style: TextStyle(
+                  fontSize: 34,
+                  fontWeight: FontWeight.w900,
                   color: colorScheme.onSurface,
-                  letterSpacing: -0.5,
+                  letterSpacing: -1,
                 ),
               ),
-              Icon(Icons.widgets_rounded, color: Colors.grey.shade400),
-            ],
-          ),
-          const SizedBox(height: 20),
-          
-          // Interactive Grid
-          GridView.count(
-            padding: EdgeInsets.zero,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 2,
-            mainAxisSpacing: 16,
-            crossAxisSpacing: 16,
-            childAspectRatio: 0.9,
-            children: [
-              _AnimatedActionCard(
-                animation: _animationController,
-                index: 0,
-                title: "Virtual ID",
-                icon: Icons.badge_rounded,
-                color: colorScheme.primary,
-              ),
-              _AnimatedActionCard(
-                animation: _animationController,
-                index: 1,
-                title: "Attendance",
-                icon: Icons.calendar_month_rounded,
-                color: const Color(0xFFF59E0B), // Vibrant Orange
-              ),
-              _AnimatedActionCard(
-                animation: _animationController,
-                index: 2,
-                title: "Results",
-                icon: Icons.assignment_turned_in_rounded,
-                color: const Color(0xFF10B981), // Emerald Green
-              ),
-              _AnimatedActionCard(
-                animation: _animationController,
-                index: 3,
-                title: "Timetable",
-                icon: Icons.schedule_rounded,
-                color: const Color(0xFF8B5CF6), // Purple
-              ),
-            ],
-          ),
-          const SizedBox(height: 40),
-          
-          // Notice Board section
-          FadeTransition(
-            opacity: CurvedAnimation(parent: _animationController, curve: const Interval(0.6, 1.0, curve: Curves.easeOut)),
-            child: SlideTransition(
-              position: Tween<Offset>(begin: const Offset(0, 0.2), end: Offset.zero).animate(
-                CurvedAnimation(parent: _animationController, curve: const Interval(0.6, 1.0, curve: Curves.easeOutCubic)),
-              ),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
+              const SizedBox(height: 25),
+
+              // Main Highlight Card
+              Container(
+                padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: colorScheme.secondary.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: colorScheme.secondary.withOpacity(0.2)),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: colorScheme.secondary.withOpacity(0.2),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(Icons.notifications_active_rounded, color: colorScheme.secondary),
+                  color: colorScheme.surface,
+                  borderRadius: BorderRadius.circular(28),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.06),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
                     ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "Important Update",
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey.shade800,
-                              fontSize: 16,
-                            ),
+                  ],
+                  border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(Icons.wallet_rounded,
+                                    color: colorScheme.primary, size: 22),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                "Enhanced Wallet\nCapacity",
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800,
+                                  color: colorScheme.onSurface,
+                                  height: 1.1,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                "Verify your identity to unlock a spending limit of up to ₹ 2 Lakhs.",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: colorScheme.onSurfaceVariant,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            "Mid-term exam schedule has been released.",
-                            style: TextStyle(
-                              color: Colors.grey.shade600,
-                              fontSize: 13,
-                            ),
+                        ),
+                        const SizedBox(width: 20),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(Icons.currency_rupee_rounded,
+                                    color: colorScheme.primary, size: 22),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                "Complete\nTransparency",
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800,
+                                  color: colorScheme.onSurface,
+                                  height: 1.1,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                "Zero hidden fees. Experience straightforward and honest digital finance.",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: colorScheme.onSurfaceVariant,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 30),
+                    // Illustration Placeholder
+                    Container(
+                      height: 200,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.transparent,
+                        image: DecorationImage(
+                          image: const AssetImage("assets/images/KYC.png"), 
+                          fit: BoxFit.contain,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
+
+              const SizedBox(height: 20),
+
+              // Small Cards
+              IntrinsicHeight(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        constraints: const BoxConstraints(minHeight: 160),
+                        decoration: BoxDecoration(
+                        color: colorScheme.surface,
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.04),
+                            blurRadius: 15,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                        border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.badge_rounded,
+                                color: colorScheme.primary, size: 22),
+                          ),
+                          const Spacer(),
+                          Text(
+                            "Keep your Identity documents (PAN/Aadhaar) ready for verification",
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w500,
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(20),
+                      constraints: const BoxConstraints(minHeight: 160),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surface,
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.04),
+                            blurRadius: 15,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                        border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.wifi_rounded,
+                                color: colorScheme.primary, size: 22),
+                          ),
+                          const Spacer(),
+                          Text(
+                            "A stable internet connection ensures a seamless onboarding process.",
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w500,
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 25),
+              
+              // Terms & Conditions Checkbox
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      height: 24,
+                      width: 24,
+                      child: Checkbox(
+                        value: _isTermsAccepted,
+                        activeColor: colorScheme.primary,
+                        checkColor: colorScheme.onPrimary,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                        onChanged: (val) {
+                          setState(() {
+                            _isTermsAccepted = val ?? false;
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: RichText(
+                        text: TextSpan(
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: colorScheme.onSurfaceVariant,
+                            height: 1.4,
+                            fontFamily: 'Outfit',
+                          ),
+                          children: [
+                            const TextSpan(text: "I accept "),
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.baseline,
+                              baseline: TextBaseline.alphabetic,
+                              child: GestureDetector(
+                                onTap: () => Navigator.pushNamed(context, '/terms'),
+                                child: Text(
+                                  "Terms & conditions",
+                                  style: TextStyle(
+                                    color: colorScheme.primary,
+                                    fontWeight: FontWeight.bold,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const TextSpan(text: " and "),
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.baseline,
+                              baseline: TextBaseline.alphabetic,
+                              child: GestureDetector(
+                                onTap: () => Navigator.pushNamed(context, '/privacy'),
+                                child: Text(
+                                  "Privacy Policy",
+                                  style: TextStyle(
+                                    color: colorScheme.primary,
+                                    fontWeight: FontWeight.bold,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 100), // Spacing for floating button
+            ],
+          ),
+        ),
+        
+        // Floating button at the bottom
+        Positioned(
+          left: 24,
+          right: 24,
+          bottom: 20,
+          child: SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: ElevatedButton(
+              onPressed: !_isTermsAccepted ? null : () async {
+                await Navigator.pushNamed(context, "/kyc");
+                await _loadUserProfile();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colorScheme.primary,
+                foregroundColor: colorScheme.onPrimary,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                elevation: 4,
+                shadowColor: colorScheme.primary.withValues(alpha: 0.3),
+              ),
+              child: const Text(
+                "Complete KYC",
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: 40),
-        ],
-      ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildKYCUnderProcessView(BuildContext context, ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    return Stack(
+      children: [
+        SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(24, 40, 24, 40),
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(32),
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.05),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                  border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Image.asset(
+                      "assets/images/reach.png", // Crane illustration
+                      height: 200,
+                      fit: BoxFit.contain,
+                    ),
+                    const SizedBox(height: 40),
+                    Text(
+                      "Your KYC is under\nprocess",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                        color: colorScheme.onSurface,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    if (_kycSlotDate != null) ...[
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.calendar_today_rounded, size: 16, color: colorScheme.primary),
+                          const SizedBox(width: 8),
+                            Text(
+                              _kycSlotTime != null 
+                                ? "Scheduled for $_kycSlotDate at $_kycSlotTime"
+                                : "Scheduled for $_kycSlotDate",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    Text(
+                      _isSlotTimeReached()
+                        ? "Your slot is now active. Please click continue."
+                        : "We will notify you once the KYC is completed",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 100), 
+            ],
+          ),
+        ),
+        
+        // Floating Button
+        Positioned(
+          left: 24,
+          right: 24,
+          bottom: 20,
+          child: SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: ElevatedButton(
+              onPressed: _isSlotTimeReached()
+                ? () {
+                    _tabController.animateTo(0); // Go back to Home
+                  }
+                : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isSlotTimeReached() ? colorScheme.primary : colorScheme.onSurface.withValues(alpha: 0.12),
+                foregroundColor: _isSlotTimeReached() ? colorScheme.onPrimary : colorScheme.onSurface.withValues(alpha: 0.04),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                elevation: _isSlotTimeReached() ? 4 : 0,
+                shadowColor: colorScheme.primary.withValues(alpha: 0.3),
+              ),
+              child: Text(
+                _isSlotTimeReached() ? "Continue" : "Waiting for Confirmation...",
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildCardTab(BuildContext context, ColorScheme colorScheme) {
+    if (_kycStatus == "Pending") {
+      return _buildKYCPendingView(context, colorScheme);
+    }
+    
+    if (_kycStatus == "Booked") {
+      return _buildKYCUnderProcessView(context, colorScheme);
+    }
+
+    if (_kycStatus == "Rejected") {
+      return _buildKYCRejectedView(context, colorScheme);
+    }
+
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildFlippingCard(context, colorScheme),
+          if (_kycStatus == "Completed")
+            _buildFlippingCard(context, colorScheme),
         ],
       ),
     );
   }
 
-  Widget _buildTransactionItem(String title, String amount, String date, IconData icon, Color color) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.grey.withOpacity(0.08)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: color, size: 24),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+  Widget _buildKYCRejectedView(BuildContext context, ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    return Stack(
+      children: [
+        SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(24, 40, 24, 20),
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(32),
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.05),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                  border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
                 ),
-                Text(
-                  date,
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Image.asset(
+                      "assets/images/reject.png",
+                      height: 200,
+                      fit: BoxFit.contain,
+                    ),
+                    const SizedBox(height: 32),
+                    Text(
+                      "KYC Verification\nRejected",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                        color: isDark ? Colors.redAccent : Colors.red,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      (_kycRemarks != null && _kycRemarks!.isNotEmpty)
+                          ? _kycRemarks!
+                          : "Please review and try again with the correct information.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
+              const SizedBox(height: 100), // Spacing for floating button
+            ],
+          ),
+        ),
+        
+        // Floating Button
+        Positioned(
+          left: 24,
+          right: 24,
+          bottom: 20,
+          child: SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: ElevatedButton(
+              onPressed: () async {
+                await Navigator.pushNamed(context, "/kyc");
+                await _loadUserProfile();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colorScheme.primary,
+                foregroundColor: colorScheme.onPrimary,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                elevation: 4,
+                shadowColor: colorScheme.primary.withValues(alpha: 0.3),
+              ),
+              child: const Text(
+                "Re-Verify",
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ),
-          Text(
-            amount,
-            style: TextStyle(
-              fontWeight: FontWeight.w900,
-              fontSize: 15,
-              color: amount.startsWith("+") ? Colors.green : Colors.red,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -1749,7 +2326,7 @@ Future<void> _removeProfilePhoto() async {
               borderRadius: BorderRadius.circular(28),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.orange.withOpacity(0.3),
+                  color: Colors.orange.withValues(alpha: 0.3),
                   blurRadius: 15,
                   offset: const Offset(0, 8),
                 ),
@@ -1857,187 +2434,33 @@ Future<void> _removeProfilePhoto() async {
   }
 
   Widget _buildTransitTab(BuildContext context, ColorScheme colorScheme) {
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
+    return Center(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Transit Pass
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [const Color(0xFF3B82F6), const Color(0xFF2563EB)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(28),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.blue.withOpacity(0.3),
-                  blurRadius: 15,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          "Transit Pass",
-                          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          "Active • Valid till 30 Jun",
-                          style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500),
-                        ),
-                      ],
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Text(
-                        "STUDENT",
-                        style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: QrImageView(
-                    data: "TRANSIT-$_userRegNo",
-                    version: QrVersions.auto,
-                    size: 100.0,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  "Tap or Scan at Entry",
-                  style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 40),
-          
-          // Campus Bus
-          Text(
-            "Campus Bus Schedule",
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: colorScheme.onSurface,
-            ),
+          Icon(
+            Icons.auto_awesome_rounded,
+            size: 64,
+            color: colorScheme.primary.withValues(alpha: 0.3),
           ),
           const SizedBox(height: 16),
-          _buildBusItem("Bus 05", "Main Gate → Admin Block", "2 mins away", Colors.blue),
-          _buildBusItem("Bus 12", "Hostel 3 → Engineering", "15 mins away", Colors.orange),
-          const SizedBox(height: 40),
-          
-          // Trip History
           Text(
-            "Recent Trips",
+            "Coming Soon",
             style: TextStyle(
-              fontSize: 18,
+              fontSize: 20,
               fontWeight: FontWeight.bold,
-              color: colorScheme.onSurface,
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
             ),
           ),
-          const SizedBox(height: 16),
-          _buildTripItem("Main Gate Tap", "Today, 08:45 AM", Icons.directions_bus_rounded),
-          _buildTripItem("Library Exit", "Yesterday, 05:20 PM", Icons.sensor_door_rounded),
-          const SizedBox(height: 20),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBusItem(String busNo, String route, String arrival, Color color) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.1)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(12),
-            ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
             child: Text(
-              busNo,
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  route,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-                Text(
-                  arrival,
-                  style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-          const Icon(Icons.chevron_right_rounded, color: Colors.grey),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTripItem(String title, String time, IconData icon) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: Colors.grey.shade600, size: 20),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-                Text(
-                  time,
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
-                ),
-              ],
+              "Smart transit tracking and passes are on their way!",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colorScheme.onSurface.withValues(alpha: 0.4),
+              ),
             ),
           ),
         ],
@@ -2051,9 +2474,9 @@ Future<void> _removeProfilePhoto() async {
       margin: const EdgeInsets.only(right: 16),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: color.withOpacity(0.2)),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2067,7 +2490,7 @@ Future<void> _removeProfilePhoto() async {
           ),
           Text(
             subtitle,
-            style: TextStyle(color: color.withOpacity(0.7), fontSize: 12, fontWeight: FontWeight.bold),
+            style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 12, fontWeight: FontWeight.bold),
           ),
         ],
       ),
@@ -2080,7 +2503,7 @@ Future<void> _removeProfilePhoto() async {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.12),
+            color: color.withValues(alpha: 0.12),
             shape: BoxShape.circle,
           ),
           child: Icon(icon, color: color, size: 28),
@@ -2095,145 +2518,7 @@ Future<void> _removeProfilePhoto() async {
   }
 }
 
-class _AnimatedActionCard extends StatefulWidget {
-  final AnimationController animation;
-  final int index;
-  final String title;
-  final IconData icon;
-  final Color color;
 
-  const _AnimatedActionCard({
-    required this.animation,
-    required this.index,
-    required this.title,
-    required this.icon,
-    required this.color,
-  });
-
-  @override
-  State<_AnimatedActionCard> createState() => _AnimatedActionCardState();
-}
-
-class _AnimatedActionCardState extends State<_AnimatedActionCard> with SingleTickerProviderStateMixin {
-  late AnimationController _scaleController;
-  late Animation<double> _scaleAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _scaleController = AnimationController(vsync: this, duration: const Duration(milliseconds: 150));
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.95).animate(CurvedAnimation(parent: _scaleController, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _scaleController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Calculate staggered delay based on index
-    final double start = (widget.index * 0.1).clamp(0.0, 1.0);
-    final double end = (start + 0.4).clamp(0.0, 1.0);
-    
-    final fadeOut = CurvedAnimation(parent: widget.animation, curve: Interval(start, end, curve: Curves.easeOut));
-    final slideIn = Tween<Offset>(begin: const Offset(0, 0.2), end: Offset.zero).animate(
-      CurvedAnimation(parent: widget.animation, curve: Interval(start, end, curve: Curves.easeOutCubic)),
-    );
-
-    return FadeTransition(
-      opacity: fadeOut,
-      child: SlideTransition(
-        position: slideIn,
-        child: GestureDetector(
-          onTapDown: (_) => _scaleController.forward(),
-          onTapUp: (_) {
-            _scaleController.reverse();
-            // Action logic here
-          },
-          onTapCancel: () => _scaleController.reverse(),
-          child: ScaleTransition(
-            scale: _scaleAnimation,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(28),
-                boxShadow: [
-                  BoxShadow(
-                    color: widget.color.withOpacity(0.12),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-                border: Border.all(color: widget.color.withOpacity(0.1), width: 1.5),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(28),
-                child: Stack(
-                  children: [
-                    // Decorative fading circle
-                    Positioned(
-                      top: -20,
-                      right: -20,
-                      child: Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: widget.color.withOpacity(0.05),
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(20.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: widget.color.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Icon(widget.icon, color: widget.color, size: 28),
-                          ),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                widget.title,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: -0.3,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                "View >",
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.grey.shade500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // --- Custom Painters ---
 
@@ -2269,7 +2554,7 @@ class ChipLinesPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.black.withOpacity(0.3)
+      ..color = Colors.black.withValues(alpha: 0.3)
       ..strokeWidth = 0.8
       ..style = PaintingStyle.stroke;
 
@@ -2334,7 +2619,7 @@ class BrushedMetalPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.white.withOpacity(0.1)
+      ..color = Colors.white.withValues(alpha: 0.1)
       ..strokeWidth = 0.5;
 
     for (double i = 0; i < size.height; i += 2) {

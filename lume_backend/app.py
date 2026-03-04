@@ -4,9 +4,11 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from config import Config
-from models import db, Student, LumeUser, ScholarApplication
+from models import db, Student, LumeUser, ScholarApplication, KYCApplication, KYCSlot
 from otp import generate_otp, verify_otp
 import bcrypt
+from datetime import datetime, timedelta, time
+from flask import jsonify
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -20,7 +22,7 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# JWT Error Handlers
+# ================== JWT Error Handlers =======================
 @jwt.unauthorized_loader
 def unauthorized_response(error_string):
     return jsonify({"error": f"Unauthorized: {error_string}"}), 401
@@ -33,7 +35,7 @@ def invalid_token_response(error_string):
 def expired_token_response(jwt_header, jwt_payload):
     return jsonify({"error": "Token has expired"}), 405
 
-# SEND OTP
+# ==================== SEND OTP ========================
 @app.route("/auth/send-otp", methods=["POST"])
 def send_otp():
     phone = request.json.get("phone")
@@ -60,7 +62,7 @@ def send_otp():
     })
 
 
-# VERIFY OTP & RETURN PROFILE
+# ================== VERIFY OTP & RETURN PROFILE ===========================
 @app.route("/auth/verify-otp", methods=["POST"])
 def verify_otp_route():
     phone = request.json.get("phone")
@@ -101,7 +103,7 @@ def verify_otp_route():
         }
     })
 
-# SET PIN
+# ================ SET PIN ====================
 @app.route("/auth/set-pin", methods=["POST"])
 def set_pin():
     phone = request.json.get("phone")
@@ -178,7 +180,7 @@ def set_pin():
             "profile_image": user.profile_image if user else None
         })
 
-# LOGIN WITH PIN
+# ================ LOGIN WITH PIN =====================
 @app.route("/auth/login-pin", methods=["POST"])
 def login_pin():
     phone = request.json.get("phone")
@@ -221,7 +223,7 @@ def login_pin():
 
 
 
-# GET USER PROFILE
+# ============ GET USER PROFILE ===================
 @app.route("/auth/profile", methods=["GET"])
 @jwt_required()
 def get_profile():
@@ -236,15 +238,23 @@ def get_profile():
     if user and not student and user.reg_no:
         student = Student.query.filter_by(reg_no=user.reg_no).first()
         
-        # Sync user status with card issued
-    if user and student:
-        expected_status = "active" if student.card_issued else "inactive"
-        if user.status != "blocked" and user.status != expected_status:
-            user.status = expected_status
-            db.session.commit()
+    # Fetch latest KYC application
+    kyc = None
+    if student:
+        kyc = KYCApplication.query.filter_by(student_id=student.id)\
+            .order_by(KYCApplication.created_at.desc())\
+            .first()
+            
+    if kyc:
+        user.kyc_status = kyc.kyc_status
+    else:
+        user.kyc_status = "Completed" if student.card_issued else "Pending"
+
+    db.session.commit()
 
     return jsonify({
         "student": {
+            "id": student.id if student else None,
             "full_name": (student.full_name if student else "Lume User") or "Lume User",
             "mobile": (student.mobile if student else user.phone) or user.phone,
             "email": (student.email if student else user.email) or user.email,
@@ -256,17 +266,19 @@ def get_profile():
             "batch_start_year": str(student.batch_start_year) if (student and student.batch_start_year) else None,
             "batch_end_year": str(student.batch_end_year) if (student and student.batch_end_year) else None,
             "profile_image": user.profile_image if (user and user.profile_image) else None,
-            "lume_status": user.status if user else "inactive"
+            "lume_status": student.institute_status if student else "inactive",
+            "kyc_status": user.kyc_status,
+            "kyc_remarks": kyc.remarks if kyc else None
         }
     })
 
-
+# ================= JWT Test ================
 @app.route("/auth/test", methods=["GET"])
 @jwt_required()
 def test_jwt():
     return jsonify({"message": "JWT is working", "identity": get_jwt_identity()})
 
-
+# ============ Upload Profile ==================
 @app.route('/auth/upload-profile-image', methods=['POST'])
 @jwt_required()
 def upload_profile_image():
@@ -300,10 +312,12 @@ def upload_profile_image():
     
     return jsonify({"error": "Upload failed"}), 500
 
+# ================ Upload Profile ===========
 @app.route('/uploads/profile_pics/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
+# =================== Remove profile ===============
 @app.route('/auth/remove-profile-image', methods=['POST'])
 @jwt_required()
 def remove_profile_image():
@@ -323,7 +337,7 @@ def remove_profile_image():
 
     return jsonify({"message": "Profile image removed"})
 
-# CREATE SCHOLAR APPLICATION
+# ================== CREATE SCHOLAR APPLICATION ===========================
 @app.route("/scholar/apply", methods=["POST"])
 def create_scholar_application():
     data = request.json
@@ -359,7 +373,7 @@ def create_scholar_application():
 
     return jsonify({"success": True})
 
-# GET SCHOLAR APPLICATION STATUS
+# =================  GET SCHOLAR APPLICATION STATUS =================
 @app.route("/scholar/status/<int:reg_id>", methods=["GET"])
 def scholar_status(reg_id):
 
@@ -377,6 +391,161 @@ def scholar_status(reg_id):
         "hasApplication": True,
         "status": appn.status
     })
-# RUN SERVER
+    
+# =============== Book KYC =====================
+@app.route("/kyc/book", methods=["POST"])
+def book_kyc():
+
+    data = request.json
+
+    slot = db.session.get(KYCSlot, data["slot_id"])
+
+    if not slot:
+        return jsonify({"error": "Slot not found"}), 404
+
+    if slot.booked_count >= slot.max_capacity:
+        return jsonify({"error": "Slot full"}), 400
+
+    # Check for existing application
+    existing = KYCApplication.query.filter_by(student_id=data["student_id"]).first()
+
+    if existing:
+        if existing.kyc_status != "Rejected":
+            return jsonify({
+                "error": "KYC already booked or completed"
+            }), 400
+        
+        # Update existing rejected application
+        existing.full_name = data["full_name"]
+        existing.aadhaar_number = data["aadhaar_number"]
+        existing.pan_number = data.get("pan_number")
+        existing.no_pan = data.get("no_pan")
+        existing.slot_id = slot.id
+        existing.kyc_status = "Booked"
+        existing.remarks = None  # Clear previous rejection remarks
+        
+    else:
+        # Create new application
+        new_app = KYCApplication(
+            student_id=data["student_id"],
+            full_name=data["full_name"],
+            aadhaar_number=data["aadhaar_number"],
+            pan_number=data.get("pan_number"),
+            no_pan=data.get("no_pan"),
+            slot_id=slot.id,
+            kyc_status="Booked"
+        )
+        db.session.add(new_app)
+
+    slot.booked_count += 1
+
+    # Update user KYC status
+    user = LumeUser.query.filter_by(student_id=data["student_id"]).first()
+    if user:
+        user.kyc_status = "Booked"
+
+    db.session.commit()
+
+    return jsonify({"success": True})
+  
+# =======  Get KYC Applications  =============== 
+@app.route("/kyc/status/<int:student_id>", methods=["GET"])
+def get_kyc_status(student_id):
+
+    appn = KYCApplication.query.filter_by(student_id=student_id)\
+        .order_by(KYCApplication.created_at.desc())\
+        .first()
+
+    if not appn:
+        return jsonify({
+            "kyc_status": "Pending",
+            "remarks": None
+        })
+
+    return jsonify({
+        "kyc_status": appn.kyc_status,
+        "remarks": appn.remarks
+    }) 
+    
+# ============ Get KYC Slots ===================
+@app.route("/kyc/slots", methods=["GET"])
+def get_kyc_slots():
+
+    cleanup_expired_slots()
+
+    start_date = datetime.today().date() + timedelta(days=2)
+
+    days_to_show = 14
+    start_hour = 10
+    end_hour = 15
+
+    slots = []
+
+    for d in range(days_to_show):
+
+        date = start_date + timedelta(days=d)
+
+        # Skip Sunday
+        if date.weekday() == 6:
+            continue
+
+        # Skip 2nd Saturday
+        if date.weekday() == 5 and 8 <= date.day <= 14:
+            continue
+
+        for hour in range(start_hour, end_hour):
+
+            slot_time = time(hour, 0)
+
+            slot = KYCSlot.query.filter_by(
+                slot_date=date,
+                slot_time=slot_time
+            ).first()
+
+            if not slot:
+
+                slot = KYCSlot(
+                    slot_date=date,
+                    slot_time=slot_time,
+                    max_capacity=40,
+                    booked_count=0
+                )
+
+                db.session.add(slot)
+                db.session.commit()
+
+            available = slot.max_capacity - slot.booked_count
+            status = "green"
+
+            if available == 0:
+                status = "full"
+            elif available < 6:
+                status = "orange"
+
+            slots.append({
+                "id": slot.id,
+                "date": slot.slot_date.strftime("%Y-%m-%d"),
+                "time": slot.slot_time.strftime("%H:%M"),
+                "available": available,
+                "status": status
+            })
+
+    return jsonify(slots)
+
+# Delete Expired slots
+def cleanup_expired_slots():
+
+    now = datetime.now()
+
+    expired = KYCSlot.query.filter(
+        KYCSlot.slot_date < now.date()
+    ).all()
+
+    for slot in expired:
+        db.session.delete(slot)
+
+    db.session.commit()
+    
+# ============ RUN SERVER =======================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

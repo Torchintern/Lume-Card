@@ -250,7 +250,7 @@ class _PhoneScreenState extends State<PhoneScreen> with SingleTickerProviderStat
                                     children: [
                                       Icon(
                                         Icons.phone_android_rounded,
-                                        color: phoneFocusNode.hasFocus ? colorScheme.primary : Colors.grey,
+                                        color: phoneFocusNode.hasFocus ? colorScheme.primary : colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                                       ),
                                       const SizedBox(width: 8),
                                       const Text(
@@ -267,11 +267,10 @@ class _PhoneScreenState extends State<PhoneScreen> with SingleTickerProviderStat
                                 hintText: "Enter number",
                                 hintStyle: TextStyle(
                                   fontSize: 16,
-                                  color: colorScheme.onSurfaceVariant.withOpacity(0.5),
+                                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                                   fontWeight: FontWeight.normal,
                                 ),
-                                filled: true,
-                                fillColor: colorScheme.onSurface.withOpacity(0.05),
+                                fillColor: colorScheme.onSurface.withValues(alpha: 0.05),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(16),
                                   borderSide: BorderSide.none,
@@ -326,7 +325,7 @@ class _PhoneScreenState extends State<PhoneScreen> with SingleTickerProviderStat
                                           size: 20,
                                           color: _isInputValid 
                                               ? colorScheme.onPrimary 
-                                              : colorScheme.onSurface.withOpacity(0.38),
+                                              : colorScheme.onSurface.withValues(alpha: 0.38),
                                         ),
                                       ],
                                     ),

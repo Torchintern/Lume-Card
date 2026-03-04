@@ -175,7 +175,7 @@ class _SetPinScreenState extends State<SetPinScreen> with SingleTickerProviderSt
       if (showMatchStatus && isComplete && _isCreatePinComplete) {
         return _doPinsMatch ? Colors.green : Colors.redAccent;
       }
-      return focusNode.hasFocus ? colorScheme.primary : Colors.transparent;
+      return focusNode.hasFocus ? colorScheme.primary : colorScheme.onSurfaceVariant.withValues(alpha: 0.2);
     }
 
     return Column(
@@ -186,7 +186,7 @@ class _SetPinScreenState extends State<SetPinScreen> with SingleTickerProviderSt
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w600,
-            color: colorScheme.onSurfaceVariant,
+            color: colorScheme.onSurface,
           ),
         ),
         const SizedBox(height: 8),
@@ -219,7 +219,7 @@ class _SetPinScreenState extends State<SetPinScreen> with SingleTickerProviderSt
               counterText: "",
               prefixIcon: Icon(
                 prefixIcon,
-                color: focusNode.hasFocus ? colorScheme.primary : Colors.grey,
+                color: focusNode.hasFocus ? colorScheme.primary : colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
               ),
               suffixIcon: showMatchStatus && isComplete && _isCreatePinComplete
                   ? Icon(
@@ -230,7 +230,7 @@ class _SetPinScreenState extends State<SetPinScreen> with SingleTickerProviderSt
                       ? const Icon(Icons.check_circle_rounded, color: Colors.green)
                       : null,
               filled: true,
-              fillColor: colorScheme.onSurface.withOpacity(0.05),
+              fillColor: colorScheme.onSurface.withValues(alpha: 0.05),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
                 borderSide: BorderSide.none,

@@ -117,4 +117,34 @@ static Future<Map<String, dynamic>> getScholarApplicationStatus(int regId) async
   };
 }
 
+// KYC Status
+static Future getKycStatus(int studentId) async {
+  final res = await http.get(
+    Uri.parse("$baseUrl/kyc/status/$studentId"),
+  );
+
+  return jsonDecode(res.body);
+}
+
+// KYC Slots
+static Future getKycSlots() async {
+  final res = await http.get(
+    Uri.parse("$baseUrl/kyc/slots"),
+  );
+
+  return jsonDecode(res.body);
+}
+
+// Book KYC
+static Future bookKyc(Map<String,dynamic> data) async {
+
+  final res = await http.post(
+    Uri.parse("$baseUrl/kyc/book"),
+    headers: {"Content-Type":"application/json"},
+    body: jsonEncode(data)
+  );
+
+  return jsonDecode(res.body);
+}
+
 }

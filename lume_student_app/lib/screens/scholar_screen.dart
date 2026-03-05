@@ -92,11 +92,7 @@ class _ScholarScreenState extends State<ScholarScreen> {
           charIndex++;
         });
       } else {
-        timer.cancel();
-        _restartTimer = Timer(const Duration(seconds: 5), () {
-          if (!mounted) return;
-          _startTyping();
-        });
+        timer.cancel(); 
       }
     });
   }
@@ -184,7 +180,7 @@ class _ScholarScreenState extends State<ScholarScreen> {
                             ),
                           ),
                           Positioned(
-                            bottom: 50,
+                            bottom: 25,
                             left: 20,
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,

@@ -32,7 +32,7 @@ class LumeUser(db.Model):
     student = db.relationship("Student", backref="lume_user")
 
     reg_no = db.Column(db.String(30), unique=True)
-    phone = db.Column(db.String(15), unique=True)
+    phone = db.Column(db.String(15), unique=True, index=True)
     email = db.Column(db.String(150))
 
     pin_hash = db.Column(db.String(255))

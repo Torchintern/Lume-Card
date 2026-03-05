@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 import '../services/api_service.dart';
 import '../providers/settings_provider.dart';
+import 'dart:ui';
 
 class LoginPinScreen extends StatefulWidget {
   const LoginPinScreen({super.key});
@@ -237,7 +238,9 @@ class _LoginPinScreenState extends State<LoginPinScreen> with SingleTickerProvid
     final colorScheme = Theme.of(context).colorScheme;
     final size = MediaQuery.of(context).size;
 
-    return Scaffold(
+    return Stack(
+    children: [
+      Scaffold(
       backgroundColor: colorScheme.surface,
       body: Consumer<SettingsProvider>(
         builder: (context, settings, child) {
@@ -495,6 +498,91 @@ class _LoginPinScreenState extends State<LoginPinScreen> with SingleTickerProvid
             ),
           );
         },
+         ),
+        ),
+
+        if (loading)
+        Positioned.fill(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+            child: Container(
+              color: Colors.black.withOpacity(0.2),
+              child: const Center(
+                child: _RippleLoader(),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _RippleLoader extends StatefulWidget {
+  const _RippleLoader();
+
+  @override
+  State<_RippleLoader> createState() => _RippleLoaderState();
+}
+
+class _RippleLoaderState extends State<_RippleLoader>
+    with SingleTickerProviderStateMixin {
+  late AnimationController controller;
+
+  @override
+  void initState() {
+    super.initState();
+
+    controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (_, __) {
+        return SizedBox(
+          width: 120,
+          height: 120,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              _buildRipple(controller.value, color),
+              _buildRipple((controller.value + 0.3) % 1, color),
+              _buildRipple((controller.value + 0.6) % 1, color),
+              Icon(
+                Icons.lock_rounded,
+                size: 36,
+                color: color,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildRipple(double value, Color color) {
+    return Container(
+      width: 120 * value,
+      height: 120 * value,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: color.withOpacity(1 - value),
+          width: 3,
+        ),
       ),
     );
   }

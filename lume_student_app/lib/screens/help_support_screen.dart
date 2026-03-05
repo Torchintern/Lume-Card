@@ -32,12 +32,27 @@ class HelpSupportScreen extends StatelessWidget {
                         top: 10,
                         left: 12,
                         child: IconButton(
-                          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+                          icon: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.2),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.5),
+                                width: 1.5,
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.arrow_back_rounded,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
                           onPressed: () => Navigator.pop(context),
                         ),
                       ),
                       const Positioned(
-                        bottom: 50,
+                        bottom: 25,
                         left: 20,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,

@@ -37,17 +37,21 @@ class AboutLumeScreen extends StatelessWidget {
                     children: [
                       const SizedBox(height: 40),
                       Container(
-                        padding: const EdgeInsets.all(16),
+                        height: 90,
+                        width: 90,
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.2),
                           shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.3),
+                            width: 2,
+                          ),
                         ),
-                        child: Image.asset(
-                          "assets/logo.png",
-                          height: 60,
-                          width: 60,
-                          fit: BoxFit.contain,
+                        child: ClipOval(
+                          child: Image.asset(
+                            "assets/logo.png",
+                            fit: BoxFit.cover,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 12),

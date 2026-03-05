@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import 'dart:ui';
+import 'dart:ui' as ui;
 import '../services/api_service.dart';
 import '../utils/campus_app_picker.dart';
 
@@ -315,7 +315,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               height: 4,
               width: 40,
               decoration: BoxDecoration(
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                color: colorScheme.onSurfaceVariant.withOpacity(0.4),
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
@@ -572,7 +572,7 @@ Future<void> _removeProfilePhoto() async {
             padding: const EdgeInsets.fromLTRB(24, 60, 24, 24),
             decoration: BoxDecoration(
               color: colorScheme.surface,
-              border: Border(bottom: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5))),
+              border: Border(bottom: BorderSide(color: colorScheme.outlineVariant.withOpacity(0.5))),
             ),
             child: Column(
               children: [
@@ -584,7 +584,7 @@ Future<void> _removeProfilePhoto() async {
                         width: 90,
                         height: 90,
                         decoration: BoxDecoration(
-                          color: colorScheme.primary.withValues(alpha: 0.1), // Light version of primary
+                          color: colorScheme.primary.withOpacity(0.1), // Light version of primary
                           shape: BoxShape.circle,
                           image: _profileImageUrl != null && _profileImageUrl!.isNotEmpty 
                             ? DecorationImage(
@@ -817,7 +817,7 @@ Future<void> _removeProfilePhoto() async {
       leading: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: iconColor.withValues(alpha: 0.12),
+          color: iconColor.withOpacity(0.12),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Icon(icon, color: iconColor, size: 22),
@@ -840,60 +840,86 @@ Future<void> _removeProfilePhoto() async {
   }
 
   Widget _buildFlippingCard(BuildContext context, ColorScheme colorScheme) {
-    return Center(
-      child: GestureDetector(
-        onTap: () async {
-          if (_kycStatus != "Completed") {
-            await Navigator.pushNamed(context, "/kyc");
-            if (!context.mounted) return;
-            final currentColorScheme = Theme.of(context).colorScheme;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Center(
+          child: GestureDetector(
+            onTap: () async {
+              if (_kycStatus != "Completed") {
+                await Navigator.pushNamed(context, "/kyc");
+                if (!context.mounted) return;
+                final currentColorScheme = Theme.of(context).colorScheme;
 
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text("Complete KYC to activate your card"),
-                backgroundColor: currentColorScheme.primary,
-                behavior: SnackBarBehavior.floating,
-                action: SnackBarAction(
-                  label: "OK",
-                  textColor: colorScheme.onPrimary,
-                  onPressed: () {},
-                ),
-              ),
-            );
-            return;
-          }
-          setState(() {
-            _isCardFlipped = !_isCardFlipped;
-          });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: const Text("Complete KYC to activate your card"),
+                    backgroundColor: currentColorScheme.primary,
+                    behavior: SnackBarBehavior.floating,
+                    action: SnackBarAction(
+                      label: "OK",
+                      textColor: colorScheme.onPrimary,
+                      onPressed: () {},
+                    ),
+                  ),
+                );
+                return;
+              }
+              setState(() {
+                _isCardFlipped = !_isCardFlipped;
+              });
 
-          if (_isCardFlipped) {
-            _flipController.forward();
-          } else {
-            _flipController.reverse();
-          }
-        },
-        child: AnimatedBuilder(
-          animation: _flipAnimation,
-          builder: (context, child) {
-            final angle = _flipAnimation.value * 3.141592653589793;
-            final isBackVisible = angle > (3.141592653589793 / 2);
-            
-            return Transform(
-              transform: Matrix4.identity()
-                ..setEntry(3, 2, 0.001)
-                ..rotateY(angle),
-              alignment: Alignment.center,
-              child: isBackVisible
-                  ? Transform(
-                      transform: Matrix4.identity()..rotateY(3.141592653589793),
-                      alignment: Alignment.center,
-                      child: _buildCardBack(context, colorScheme),
-                    )
-                  : _buildCardFront(context, colorScheme),
-            );
-          },
+              if (_isCardFlipped) {
+                _flipController.forward();
+              } else {
+                _flipController.reverse();
+              }
+            },
+            child: AnimatedBuilder(
+              animation: _flipAnimation,
+              builder: (context, child) {
+                final angle = _flipAnimation.value * 3.141592653589793;
+                final isBackVisible = angle > (3.141592653589793 / 2);
+                
+                return Transform(
+                  transform: Matrix4.identity()
+                    ..setEntry(3, 2, 0.001)
+                    ..rotateY(angle),
+                  alignment: Alignment.center,
+                  child: isBackVisible
+                      ? Transform(
+                          transform: Matrix4.identity()..rotateY(3.141592653589793),
+                          alignment: Alignment.center,
+                          child: _buildCardBack(context, colorScheme),
+                        )
+                      : _buildCardFront(context, colorScheme),
+                );
+              },
+            ),
+          ),
         ),
-      ),
+        const SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.touch_app_rounded,
+              size: 14,
+              color: colorScheme.primary.withOpacity(0.6),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              "Tap to Flip",
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurfaceVariant.withOpacity(0.7),
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -917,7 +943,7 @@ Future<void> _removeProfilePhoto() async {
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.5),
+            color: Colors.black.withOpacity(0.5),
             blurRadius: 25,
             offset: const Offset(0, 15),
           ),
@@ -942,9 +968,9 @@ Future<void> _removeProfilePhoto() async {
                 borderRadius: BorderRadius.circular(24),
                 gradient: LinearGradient(
                   colors: [
-                    Colors.white.withValues(alpha: 0.1),
+                    Colors.white.withOpacity(0.1),
                     Colors.transparent,
-                    Colors.black.withValues(alpha: 0.1),
+                    Colors.black.withOpacity(0.1),
                   ],
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
@@ -1030,7 +1056,7 @@ Future<void> _removeProfilePhoto() async {
                       Text(
                         "STUDENT EXCLUSIVE",
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.5),
+                          color: Colors.white.withOpacity(0.5),
                           fontSize: 10,
                           fontWeight: FontWeight.w800,
                           letterSpacing: 2.0,
@@ -1094,7 +1120,7 @@ Future<void> _removeProfilePhoto() async {
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
+            color: Colors.black.withOpacity(0.3),
             blurRadius: 25,
             offset: const Offset(0, 15),
           ),
@@ -1165,7 +1191,7 @@ Future<void> _removeProfilePhoto() async {
                       style: TextStyle(
                         fontSize: 9,
                         fontWeight: FontWeight.w700,
-                        color: const Color(0xFF1A1A2E).withValues(alpha: 0.7),
+                        color: const Color(0xFF1A1A2E).withOpacity(0.7),
                         letterSpacing: 0.1,
                       ),
                       maxLines: 2,
@@ -1306,8 +1332,8 @@ Future<void> _removeProfilePhoto() async {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            const Color(0xFFE8820C).withValues(alpha: 0.5),
-            const Color(0xFFE8820C).withValues(alpha: 0.1),
+            const Color(0xFFE8820C).withOpacity(0.5),
+            const Color(0xFFE8820C).withOpacity(0.1),
             Colors.transparent,
           ],
         ),
@@ -1324,7 +1350,7 @@ Future<void> _removeProfilePhoto() async {
           style: TextStyle(
             fontSize: 8,
             fontWeight: FontWeight.w800,
-            color: const Color(0xFF1A1A2E).withValues(alpha: 0.5),
+            color: const Color(0xFF1A1A2E).withOpacity(0.5),
             letterSpacing: 0.5,
           ),
         ),
@@ -1352,12 +1378,12 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: -20,
               right: -20,
-              child: Icon(Icons.wb_sunny_rounded, size: 200, color: Colors.white.withValues(alpha: 0.15)),
+              child: Icon(Icons.wb_sunny_rounded, size: 200, color: Colors.white.withOpacity(0.15)),
             ),
             Positioned(
               top: 40,
               left: 20,
-              child: Icon(Icons.wb_sunny_rounded, size: 100, color: Colors.white.withValues(alpha: 0.08)),
+              child: Icon(Icons.wb_sunny_rounded, size: 100, color: Colors.white.withOpacity(0.08)),
             ),
           ],
         );
@@ -1367,12 +1393,12 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: 20,
               right: 20,
-              child: Icon(Icons.cloud_rounded, size: 180, color: Colors.white.withValues(alpha: 0.12)),
+              child: Icon(Icons.cloud_rounded, size: 180, color: Colors.white.withOpacity(0.12)),
             ),
             Positioned(
               bottom: 40,
               left: -30,
-              child: Icon(Icons.cloud_rounded, size: 140, color: Colors.white.withValues(alpha: 0.08)),
+              child: Icon(Icons.cloud_rounded, size: 140, color: Colors.white.withOpacity(0.08)),
             ),
           ],
         );
@@ -1382,12 +1408,12 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: 0,
               right: 40,
-              child: Icon(Icons.umbrella_rounded, size: 160, color: Colors.white.withValues(alpha: 0.1)),
+              child: Icon(Icons.umbrella_rounded, size: 160, color: Colors.white.withOpacity(0.1)),
             ),
             ...List.generate(15, (index) => Positioned(
               top: (index * 20) % 200,
               left: (index * 30) % 400,
-              child: Icon(Icons.water_drop_rounded, size: 12, color: Colors.white.withValues(alpha: 0.15)),
+              child: Icon(Icons.water_drop_rounded, size: 12, color: Colors.white.withOpacity(0.15)),
             )),
           ],
         );
@@ -1397,12 +1423,12 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: 10,
               right: 30,
-              child: Icon(Icons.nightlight_round, size: 120, color: Colors.white.withValues(alpha: 0.15)),
+              child: Icon(Icons.nightlight_round, size: 120, color: Colors.white.withOpacity(0.15)),
             ),
             ...List.generate(20, (index) => Positioned(
               top: (index * 15) % 250.0,
               left: (index * 25) % 450.0,
-              child: Icon(Icons.star_rounded, size: 8, color: Colors.white.withValues(alpha: 0.2)),
+              child: Icon(Icons.star_rounded, size: 8, color: Colors.white.withOpacity(0.2)),
             )),
           ],
         );
@@ -1431,7 +1457,7 @@ Future<void> _removeProfilePhoto() async {
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      colorScheme.secondary.withValues(alpha: 0.4),
+                      colorScheme.secondary.withOpacity(0.4),
                       Colors.transparent,
                     ],
                   ),
@@ -1477,9 +1503,9 @@ Future<void> _removeProfilePhoto() async {
                                 icon: Container(
                                   padding: const EdgeInsets.all(2),
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.2),
+                                    color: Colors.white.withOpacity(0.2),
                                     shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white.withValues(alpha: 0.5), width: 1.5),
+                                    border: Border.all(color: Colors.white.withOpacity(0.5), width: 1.5),
                                   ),
                                   child: CircleAvatar(
                                     key: ValueKey(_profileImageUrl),
@@ -1502,12 +1528,6 @@ Future<void> _removeProfilePhoto() async {
                                 ),
                                 onPressed: () => _scaffoldKey.currentState?.openDrawer(),
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.notifications_none_rounded, color: Colors.white),
-                                onPressed: () {
-                                  Navigator.pushNamed(context, '/notifications');
-                                },
-                              ),
                             ],
                           ),
                         ),
@@ -1529,7 +1549,7 @@ Future<void> _removeProfilePhoto() async {
                                   Text(
                                     "${_getGreeting()} ${_weatherThemes[_currentCondition]!.greetingSuffix}",
                                     style: TextStyle(
-                                      color: Colors.white.withValues(alpha: 0.9),
+                                      color: Colors.white.withOpacity(0.9),
                                       fontSize: 14,
                                       fontWeight: FontWeight.w600,
                                       letterSpacing: 0.2,
@@ -1550,13 +1570,13 @@ Future<void> _removeProfilePhoto() async {
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                     decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.1),
+                                      color: Colors.black.withOpacity(0.1),
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Text(
                                       _getFormattedDate(),
                                       style: TextStyle(
-                                        color: Colors.white.withValues(alpha: 0.8),
+                                        color: Colors.white.withOpacity(0.8),
                                         fontSize: 11,
                                         fontWeight: FontWeight.w500,
                                       ),
@@ -1570,14 +1590,14 @@ Future<void> _removeProfilePhoto() async {
                             ClipRRect(
                               borderRadius: BorderRadius.circular(24),
                               child: BackdropFilter(
-                                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                                filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                                 child: Container(
                                   padding: const EdgeInsets.all(14),
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.12),
+                                    color: Colors.white.withOpacity(0.12),
                                     borderRadius: BorderRadius.circular(24),
                                     border: Border.all(
-                                      color: Colors.white.withValues(alpha: 0.2),
+                                      color: Colors.white.withOpacity(0.2),
                                       width: 1.2,
                                     ),
                                   ),
@@ -1598,7 +1618,7 @@ Future<void> _removeProfilePhoto() async {
                                       Text(
                                         _weatherDesc.toUpperCase(),
                                         style: TextStyle(
-                                          color: Colors.white.withValues(alpha: 0.7),
+                                          color: Colors.white.withOpacity(0.7),
                                           fontSize: 9,
                                           fontWeight: FontWeight.w600,
                                         ),
@@ -1627,7 +1647,7 @@ Future<void> _removeProfilePhoto() async {
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.05),
+                        color: Colors.black.withOpacity(0.05),
                         blurRadius: 10,
                         offset: const Offset(0, -5),
                       ),
@@ -1638,7 +1658,7 @@ Future<void> _removeProfilePhoto() async {
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                     indicator: BoxDecoration(
                       borderRadius: BorderRadius.circular(16),
-                      color: colorScheme.primary.withValues(alpha: 0.1),
+                      color: colorScheme.primary.withOpacity(0.1),
                     ),
                     indicatorSize: TabBarIndicatorSize.tab,
                     dividerColor: Colors.transparent,
@@ -1679,37 +1699,51 @@ Future<void> _removeProfilePhoto() async {
   }
 
   Widget _buildHomeTab(BuildContext context, ColorScheme colorScheme) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.construction_rounded,
-            size: 64,
-            color: colorScheme.primary.withValues(alpha: 0.3),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            "Coming Soon",
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: colorScheme.onSurface.withValues(alpha: 0.6),
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: CustomPaint(
+            painter: HomeBackgroundPainter(
+              color: colorScheme.primary,
+              isDark: isDark,
             ),
           ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40),
-            child: Text(
-              "We're working on something exciting for your Home hub!",
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface.withValues(alpha: 0.4),
+        ),
+        Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.construction_rounded,
+                size: 64,
+                color: colorScheme.primary.withOpacity(0.3),
               ),
-            ),
+              const SizedBox(height: 16),
+              Text(
+                "Coming Soon",
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface.withOpacity(0.6),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 40),
+                child: Text(
+                  "We're working on something exciting for your Home hub!",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: colorScheme.onSurface.withOpacity(0.4),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -1728,7 +1762,7 @@ Future<void> _removeProfilePhoto() async {
                 "Empower your digital journey with LUME",
                 style: TextStyle(
                   fontSize: 16,
-                  color: colorScheme.onSurface.withValues(alpha: 0.6),
+                  color: colorScheme.onSurface.withOpacity(0.6),
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -1752,12 +1786,12 @@ Future<void> _removeProfilePhoto() async {
                   borderRadius: BorderRadius.circular(28),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.06),
+                      color: Colors.black.withOpacity(isDark ? 0.3 : 0.06),
                       blurRadius: 20,
                       offset: const Offset(0, 10),
                     ),
                   ],
-                  border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                  border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
                 ),
                 child: Column(
                   children: [
@@ -1771,7 +1805,7 @@ Future<void> _removeProfilePhoto() async {
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+                                  color: colorScheme.primaryContainer.withOpacity(0.3),
                                   shape: BoxShape.circle,
                                 ),
                                 child: Icon(Icons.wallet_rounded,
@@ -1807,7 +1841,7 @@ Future<void> _removeProfilePhoto() async {
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+                                  color: colorScheme.primaryContainer.withOpacity(0.3),
                                   shape: BoxShape.circle,
                                 ),
                                 child: Icon(Icons.currency_rupee_rounded,
@@ -1869,12 +1903,12 @@ Future<void> _removeProfilePhoto() async {
                         borderRadius: BorderRadius.circular(24),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.04),
+                            color: Colors.black.withOpacity(isDark ? 0.3 : 0.04),
                             blurRadius: 15,
                             offset: const Offset(0, 8),
                           ),
                         ],
-                        border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                        border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1882,7 +1916,7 @@ Future<void> _removeProfilePhoto() async {
                           Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+                              color: colorScheme.primaryContainer.withOpacity(0.3),
                               shape: BoxShape.circle,
                             ),
                             child: Icon(Icons.badge_rounded,
@@ -1912,12 +1946,12 @@ Future<void> _removeProfilePhoto() async {
                         borderRadius: BorderRadius.circular(24),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.04),
+                            color: Colors.black.withOpacity(isDark ? 0.3 : 0.04),
                             blurRadius: 15,
                             offset: const Offset(0, 8),
                           ),
                         ],
-                        border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                        border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1925,7 +1959,7 @@ Future<void> _removeProfilePhoto() async {
                           Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+                              color: colorScheme.primaryContainer.withOpacity(0.3),
                               shape: BoxShape.circle,
                             ),
                             child: Icon(Icons.wifi_rounded,
@@ -2046,7 +2080,7 @@ Future<void> _removeProfilePhoto() async {
                   borderRadius: BorderRadius.circular(16),
                 ),
                 elevation: 4,
-                shadowColor: colorScheme.primary.withValues(alpha: 0.3),
+                shadowColor: colorScheme.primary.withOpacity(0.3),
               ),
               child: const Text(
                 "Complete KYC",
@@ -2078,12 +2112,12 @@ Future<void> _removeProfilePhoto() async {
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.05),
+                      color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
                       blurRadius: 20,
                       offset: const Offset(0, 10),
                     ),
                   ],
-                  border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                  border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -2160,13 +2194,13 @@ Future<void> _removeProfilePhoto() async {
                   }
                 : null,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _isSlotTimeReached() ? colorScheme.primary : colorScheme.onSurface.withValues(alpha: 0.12),
-                foregroundColor: _isSlotTimeReached() ? colorScheme.onPrimary : colorScheme.onSurface.withValues(alpha: 0.04),
+                backgroundColor: _isSlotTimeReached() ? colorScheme.primary : colorScheme.onSurface.withOpacity(0.12),
+                foregroundColor: _isSlotTimeReached() ? colorScheme.onPrimary : colorScheme.onSurface.withOpacity(0.04),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
                 elevation: _isSlotTimeReached() ? 4 : 0,
-                shadowColor: colorScheme.primary.withValues(alpha: 0.3),
+                shadowColor: colorScheme.primary.withOpacity(0.3),
               ),
               child: Text(
                 _isSlotTimeReached() ? "Continue" : "Waiting for Confirmation...",
@@ -2183,6 +2217,8 @@ Future<void> _removeProfilePhoto() async {
   }
 
   Widget _buildCardTab(BuildContext context, ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
     if (_kycStatus == "Pending") {
       return _buildKYCPendingView(context, colorScheme);
     }
@@ -2195,16 +2231,35 @@ Future<void> _removeProfilePhoto() async {
       return _buildKYCRejectedView(context, colorScheme);
     }
 
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_kycStatus == "Completed")
-            _buildFlippingCard(context, colorScheme),
-        ],
-      ),
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: CustomPaint(
+            painter: CardBackgroundPainter(
+              color: colorScheme.primary,
+              isDark: isDark,
+            ),
+          ),
+        ),
+        SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (_kycStatus == "Completed") ...[
+                _buildFlippingCard(context, colorScheme),
+                const SizedBox(height: 30),
+                _buildCardActions(context, colorScheme),
+
+                const SizedBox(height: 35),
+
+                _buildTransactionsSection(context, colorScheme),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -2224,12 +2279,12 @@ Future<void> _removeProfilePhoto() async {
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.05),
+                      color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
                       blurRadius: 20,
                       offset: const Offset(0, 10),
                     ),
                   ],
-                  border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                  border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -2291,7 +2346,7 @@ Future<void> _removeProfilePhoto() async {
                   borderRadius: BorderRadius.circular(16),
                 ),
                 elevation: 4,
-                shadowColor: colorScheme.primary.withValues(alpha: 0.3),
+                shadowColor: colorScheme.primary.withOpacity(0.3),
               ),
               child: const Text(
                 "Re-Verify",
@@ -2308,163 +2363,191 @@ Future<void> _removeProfilePhoto() async {
   }
 
   Widget _buildRewardsTab(BuildContext context, ColorScheme colorScheme) {
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Points Balance
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.orange.shade400, Colors.orange.shade700],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(28),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.orange.withValues(alpha: 0.3),
-                  blurRadius: 15,
-                  offset: const Offset(0, 8),
-                ),
-              ],
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: CustomPaint(
+            painter: RewardsBackgroundPainter(
+              color: Colors.orange,
+              isDark: isDark,
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      "Your Points",
-                      style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        const Icon(Icons.stars_rounded, color: Colors.white, size: 28),
-                        const SizedBox(width: 8),
-                        const Text(
-                          "2,450",
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 32,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ],
+          ),
+        ),
+        SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Points Balance
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.orange.shade400, Colors.orange.shade700],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(28),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.orange.withOpacity(0.3),
+                      blurRadius: 15,
+                      offset: const Offset(0, 8),
                     ),
                   ],
                 ),
-                ElevatedButton(
-                  onPressed: () {},
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.orange.shade700,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                    elevation: 0,
-                  ),
-                  child: const Text("Redeem", style: TextStyle(fontWeight: FontWeight.bold)),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "Your Points",
+                          style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            const Icon(Icons.stars_rounded, color: Colors.white, size: 28),
+                            const SizedBox(width: 8),
+                            const Text(
+                              "2,450",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 32,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    ElevatedButton(
+                      onPressed: () {},
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.orange.shade700,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        elevation: 0,
+                      ),
+                      child: const Text("Redeem", style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 40),
-          
-          // Featured Deals
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
+              ),
+              const SizedBox(height: 40),
+              
+              // Featured Deals
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    "Featured Offers",
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {},
+                    child: const Text("View All"),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                height: 180,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  physics: const BouncingScrollPhysics(),
+                  children: [
+                    _buildOfferCard("20% Off", "At Campus Store", Icons.shopping_bag_rounded, Colors.blue),
+                    _buildOfferCard("Free Coffee", "At Red Cup Cafe", Icons.coffee_rounded, Colors.brown),
+                    _buildOfferCard("BOGO Movie", "PVR Cinemas", Icons.movie_rounded, Colors.red),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 40),
+              
+              // Categories
               Text(
-                "Featured Offers",
+                "Categories",
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: colorScheme.onSurface,
                 ),
               ),
-              TextButton(
-                onPressed: () {},
-                child: const Text("View All"),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _buildCategoryIcon(Icons.restaurant_rounded, "Food", Colors.green),
+                  _buildCategoryIcon(Icons.shopping_cart_rounded, "Shop", Colors.purple),
+                  _buildCategoryIcon(Icons.local_taxi_rounded, "Travel", Colors.amber),
+                  _buildCategoryIcon(Icons.sports_esports_rounded, "Games", Colors.pink),
+                ],
               ),
+              const SizedBox(height: 30),
             ],
           ),
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 180,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
-              children: [
-                _buildOfferCard("20% Off", "At Campus Store", Icons.shopping_bag_rounded, Colors.blue),
-                _buildOfferCard("Free Coffee", "At Red Cup Cafe", Icons.coffee_rounded, Colors.brown),
-                _buildOfferCard("BOGO Movie", "PVR Cinemas", Icons.movie_rounded, Colors.red),
-              ],
-            ),
-          ),
-          const SizedBox(height: 40),
-          
-          // Categories
-          Text(
-            "Categories",
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: colorScheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildCategoryIcon(Icons.restaurant_rounded, "Food", Colors.green),
-              _buildCategoryIcon(Icons.shopping_cart_rounded, "Shop", Colors.purple),
-              _buildCategoryIcon(Icons.local_taxi_rounded, "Travel", Colors.amber),
-              _buildCategoryIcon(Icons.sports_esports_rounded, "Games", Colors.pink),
-            ],
-          ),
-          const SizedBox(height: 30),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   Widget _buildTransitTab(BuildContext context, ColorScheme colorScheme) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.auto_awesome_rounded,
-            size: 64,
-            color: colorScheme.primary.withValues(alpha: 0.3),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            "Coming Soon",
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: colorScheme.onSurface.withValues(alpha: 0.6),
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: CustomPaint(
+            painter: TransitBackgroundPainter(
+              color: Colors.blue,
+              isDark: isDark,
             ),
           ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40),
-            child: Text(
-              "Smart transit tracking and passes are on their way!",
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface.withValues(alpha: 0.4),
+        ),
+        Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.auto_awesome_rounded,
+                size: 64,
+                color: colorScheme.primary.withOpacity(0.3),
               ),
-            ),
+              const SizedBox(height: 16),
+              Text(
+                "Coming Soon",
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface.withOpacity(0.6),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 40),
+                child: Text(
+                  "Smart transit tracking and passes are on their way!",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: colorScheme.onSurface.withOpacity(0.4),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -2474,9 +2557,9 @@ Future<void> _removeProfilePhoto() async {
       margin: const EdgeInsets.only(right: 16),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: color.withValues(alpha: 0.2)),
+        border: Border.all(color: color.withOpacity(0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2490,7 +2573,7 @@ Future<void> _removeProfilePhoto() async {
           ),
           Text(
             subtitle,
-            style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 12, fontWeight: FontWeight.bold),
+            style: TextStyle(color: color.withOpacity(0.7), fontSize: 12, fontWeight: FontWeight.bold),
           ),
         ],
       ),
@@ -2503,7 +2586,7 @@ Future<void> _removeProfilePhoto() async {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
+            color: color.withOpacity(0.12),
             shape: BoxShape.circle,
           ),
           child: Icon(icon, color: color, size: 28),
@@ -2521,6 +2604,171 @@ Future<void> _removeProfilePhoto() async {
 
 
 // --- Custom Painters ---
+
+Widget _buildTransactionsSection(BuildContext context, ColorScheme colorScheme) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+
+      /// Header
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            "Card Transactions",
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              color: colorScheme.onSurface,
+            ),
+          ),
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              Navigator.pushNamed(context, "/transactions");
+            },
+            child: Row(
+              children: [
+                Text(
+                  "View All",
+                  style: TextStyle(
+                    color: colorScheme.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 14,
+                  color: colorScheme.primary,
+                )
+              ],
+            ),
+          ),
+        ],
+      ),
+
+      const SizedBox(height: 14),
+
+      /// Transaction Tile
+      InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () {
+          Navigator.pushNamed(context, "/transactions");
+        },
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: colorScheme.surface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: colorScheme.outlineVariant.withOpacity(0.5),
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colorScheme.primary.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.receipt_long_rounded,
+                  color: colorScheme.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 14),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Recent Transactions",
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "View your latest card activity",
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              Icon(
+                Icons.chevron_right_rounded,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+Widget _buildCardActions(BuildContext context, ColorScheme colorScheme) {
+  final iconColor = colorScheme.primary;
+
+  Widget actionItem(IconData icon, String label, VoidCallback onTap) {
+    return Column(
+      children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(22),
+          onTap: onTap,
+          child: Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: iconColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(22),
+            ),
+            child: Icon(icon, color: iconColor, size: 32),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          label,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 14,
+            color: colorScheme.onSurface,
+          ),
+        )
+      ],
+    );
+  }
+
+  return Row(
+    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+    children: [
+      actionItem(
+        Icons.visibility_rounded,
+        "View Details",
+        () {},
+      ),
+      actionItem(
+        Icons.lock_outline_rounded,
+        "Lock Card",
+        () {},
+      ),
+      actionItem(
+        Icons.settings_rounded,
+        "Settings",
+        () {},
+      ),
+    ],
+  );
+}
 
 class CardDecorativePainter extends CustomPainter {
   final Color color;
@@ -2554,7 +2802,7 @@ class ChipLinesPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.3)
+      ..color = Colors.black.withOpacity(0.3)
       ..strokeWidth = 0.8
       ..style = PaintingStyle.stroke;
 
@@ -2619,7 +2867,7 @@ class BrushedMetalPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.1)
+      ..color = Colors.white.withOpacity(0.1)
       ..strokeWidth = 0.5;
 
     for (double i = 0; i < size.height; i += 2) {
@@ -2634,4 +2882,193 @@ class BrushedMetalPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class CardBackgroundPainter extends CustomPainter {
+  final Color color;
+  final bool isDark;
+
+  CardBackgroundPainter({required this.color, required this.isDark});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color.withOpacity(isDark ? 0.12 : 0.08)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+
+    // Draw stylized card outlines in a pattern
+    for (int i = 0; i < 6; i++) {
+      final double xPos = size.width * (0.2 + (i % 2) * 0.4);
+      final double yPos = size.height * (0.1 + i * 0.15);
+      
+      canvas.save();
+      canvas.translate(xPos, yPos);
+      canvas.rotate(0.2 * (i + 1));
+      
+      final rect = RRect.fromRectAndRadius(
+        const Rect.fromLTWH(-60, -40, 120, 80),
+        const Radius.circular(8),
+      );
+      canvas.drawRRect(rect, paint);
+      
+      // Draw a small "chip" inside
+      final chipRect = RRect.fromRectAndRadius(
+        const Rect.fromLTWH(-45, -15, 20, 15),
+        const Radius.circular(2),
+      );
+      canvas.drawRRect(chipRect, paint);
+      
+      canvas.restore();
+    }
+
+    // Add some soft decorative circles
+    final dotPaint = Paint()
+      ..color = color.withOpacity(isDark ? 0.06 : 0.04)
+      ..style = PaintingStyle.fill;
+
+    canvas.drawCircle(Offset(size.width * 0.85, size.height * 0.15), 60, dotPaint);
+    canvas.drawCircle(Offset(size.width * 0.1, size.height * 0.45), 40, dotPaint);
+    canvas.drawCircle(Offset(size.width * 0.7, size.height * 0.8), 80, dotPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CardBackgroundPainter oldDelegate) {
+    return oldDelegate.color != color || oldDelegate.isDark != isDark;
+  }
+}
+
+class HomeBackgroundPainter extends CustomPainter {
+  final Color color;
+  final bool isDark;
+
+  HomeBackgroundPainter({required this.color, required this.isDark});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double opacity = isDark ? 0.12 : 0.08;
+    final List<IconData> icons = [
+      Icons.grid_view_rounded,
+      Icons.widgets_rounded,
+      Icons.layers_rounded,
+      Icons.auto_awesome_mosaic_rounded,
+    ];
+
+    for (int i = 0; i < 8; i++) {
+      final double xPos = size.width * (0.1 + (i % 3) * 0.35);
+      final double yPos = size.height * (0.1 + i * 0.12);
+      final IconData icon = icons[i % icons.length];
+      
+      _drawIcon(canvas, icon, Offset(xPos, yPos), 40, color.withOpacity(opacity));
+    }
+  }
+
+  void _drawIcon(Canvas canvas, IconData icon, Offset center, double size, Color color) {
+    final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
+    textPainter.text = TextSpan(
+      text: String.fromCharCode(icon.codePoint),
+      style: TextStyle(
+        fontSize: size,
+        fontFamily: icon.fontFamily,
+        package: icon.fontPackage,
+        color: color,
+      ),
+    );
+    textPainter.layout();
+    textPainter.paint(canvas, center - Offset(textPainter.width / 2, textPainter.height / 2));
+  }
+
+  @override
+  bool shouldRepaint(covariant HomeBackgroundPainter oldDelegate) => 
+      oldDelegate.color != color || oldDelegate.isDark != isDark;
+}
+
+class RewardsBackgroundPainter extends CustomPainter {
+  final Color color;
+  final bool isDark;
+
+  RewardsBackgroundPainter({required this.color, required this.isDark});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double opacity = isDark ? 0.12 : 0.08;
+    final List<IconData> icons = [
+      Icons.card_giftcard_rounded,
+      Icons.restaurant_rounded,
+      Icons.attach_money_rounded,
+      Icons.monetization_on_rounded,
+    ];
+
+    for (int i = 0; i < 8; i++) {
+      final double xPos = size.width * (0.15 + (i % 3) * 0.32);
+      final double yPos = size.height * (0.05 + i * 0.13);
+      final IconData icon = icons[i % icons.length];
+      
+      _drawIcon(canvas, icon, Offset(xPos, yPos), 45, color.withOpacity(opacity));
+    }
+  }
+
+  void _drawIcon(Canvas canvas, IconData icon, Offset center, double size, Color color) {
+    final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
+    textPainter.text = TextSpan(
+      text: String.fromCharCode(icon.codePoint),
+      style: TextStyle(
+        fontSize: size,
+        fontFamily: icon.fontFamily,
+        package: icon.fontPackage,
+        color: color,
+      ),
+    );
+    textPainter.layout();
+    textPainter.paint(canvas, center - Offset(textPainter.width / 2, textPainter.height / 2));
+  }
+
+  @override
+  bool shouldRepaint(covariant RewardsBackgroundPainter oldDelegate) => 
+      oldDelegate.color != color || oldDelegate.isDark != isDark;
+}
+
+class TransitBackgroundPainter extends CustomPainter {
+  final Color color;
+  final bool isDark;
+
+  TransitBackgroundPainter({required this.color, required this.isDark});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double opacity = isDark ? 0.12 : 0.08;
+    final List<IconData> icons = [
+      Icons.subway_rounded,
+      Icons.directions_bus_rounded,
+      Icons.flight_rounded,
+      Icons.commute_rounded,
+    ];
+
+    for (int i = 0; i < 6; i++) {
+      final double xPos = size.width * (0.2 + (i % 2) * 0.5);
+      final double yPos = size.height * (0.1 + i * 0.15);
+      final IconData icon = icons[i % icons.length];
+      
+      _drawIcon(canvas, icon, Offset(xPos, yPos), 42, color.withOpacity(opacity));
+    }
+  }
+
+  void _drawIcon(Canvas canvas, IconData icon, Offset center, double size, Color color) {
+    final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
+    textPainter.text = TextSpan(
+      text: String.fromCharCode(icon.codePoint),
+      style: TextStyle(
+        fontSize: size,
+        fontFamily: icon.fontFamily,
+        package: icon.fontPackage,
+        color: color,
+      ),
+    );
+    textPainter.layout();
+    textPainter.paint(canvas, center - Offset(textPainter.width / 2, textPainter.height / 2));
+  }
+
+  @override
+  bool shouldRepaint(covariant TransitBackgroundPainter oldDelegate) => 
+      oldDelegate.color != color || oldDelegate.isDark != isDark;
 }

@@ -47,9 +47,7 @@ def send_otp():
 
     if not student:
         return jsonify({"error": "Mobile not registered with any institute"}), 404
-
-    if not student.card_issued:
-        return jsonify({"error": "Card not issued yet"}), 400
+    
 
     if student.institute_status != "active":
         return jsonify({"error": "Student inactive or blocked"}), 403
@@ -82,7 +80,7 @@ def verify_otp_route():
         return jsonify({"error": "Student not found"}), 404
     
     # Match the last 10 digits to be robust against country code variations
-    user = LumeUser.query.filter(LumeUser.phone.like(f"%{phone[-10:]}")).first()
+    user = LumeUser.query.filter_by(phone=phone).first()
     user_exists = user is not None
     
     return jsonify({
@@ -155,7 +153,6 @@ def set_pin():
         phone=phone,
         email=student.email,
         pin_hash=hashed_pin,
-        status="active" if student.card_issued else "inactive"
     )
 
         db.session.add(user)
@@ -190,6 +187,9 @@ def login_pin():
         return jsonify({"error": "Phone and PIN required"}), 400
 
     user = LumeUser.query.filter_by(phone=phone).first()
+    student = db.session.get(Student, user.student_id)
+    if not student:
+        return jsonify({"error": "Student record missing"}), 404
 
     if not user:
         return jsonify({"error": "User not registered"}), 404

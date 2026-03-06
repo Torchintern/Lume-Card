@@ -130,3 +130,112 @@ class KYCApplication(db.Model):
         db.DateTime,
         server_default=db.func.now()
     )
+    
+class LumeCard(db.Model):
+    __tablename__ = "lume_cards"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("lume_users.id"),
+        nullable=False,
+        unique=True
+    )
+
+    user = db.relationship("LumeUser", backref="card")
+
+    # Card details
+    card_number = db.Column(db.String(16), unique=True, index=True)
+    expiry_month = db.Column(db.Integer)
+    expiry_year = db.Column(db.Integer)
+    cvv = db.Column(db.String(3))
+
+    network = db.Column(db.Enum("RUPAY"), default="RUPAY")
+
+    card_type = db.Column(
+        db.Enum("VIRTUAL", "PHYSICAL"),
+        default="VIRTUAL"
+    )
+
+    pin_hash = db.Column(db.String(255))
+
+    # Balance
+    balance = db.Column(db.Numeric(12,2), default=0.00)
+
+    # Card state
+    card_state = db.Column(
+        db.Enum("ACTIVE", "BLOCKED", "REPLACED", "EXPIRED"),
+        default="ACTIVE"
+    )
+
+    card_lock = db.Column(
+        db.Enum("LOCKED", "UNLOCKED"),
+        default="UNLOCKED"
+    )
+
+    # Controls
+    pos_enabled = db.Column(db.Boolean, default=False)
+    online_enabled = db.Column(db.Boolean, default=False)
+    atm_enabled = db.Column(db.Boolean, default=False)
+    contactless_enabled = db.Column(db.Boolean, default=False)
+    tokenised_enabled = db.Column(db.Boolean, default=False)
+
+    tap_and_pay_enabled = db.Column(db.Boolean, default=False)
+    ncmc_enabled = db.Column(db.Boolean, default=False)
+
+    # Limits
+    pos_limit = db.Column(db.Integer, default=20000)
+    online_limit = db.Column(db.Integer, default=20000)
+    contactless_limit = db.Column(db.Integer, default=5000)
+    tokenised_limit = db.Column(db.Integer, default=20000)
+    atm_limit = db.Column(db.Integer, default=10000)
+
+    order_status = db.Column(
+        db.Enum(
+            "NOT_REQUESTED",
+            "ORDERED",
+            "PRINTING",
+            "DISPATCHED",
+            "DELIVERED"
+        ),
+        default="NOT_REQUESTED"
+    )
+
+    issued_at = db.Column(
+        db.DateTime,
+        server_default=db.func.now()
+    )
+
+# ===================== TRANSACTIONS =========================
+class Transaction(db.Model):
+    __tablename__ = "transactions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("lume_users.id"),
+        nullable=False
+    )
+    user = db.relationship("LumeUser", backref="transactions")
+
+    title = db.Column(db.String(255), nullable=False)
+    
+    transaction_type = db.Column(
+        db.Enum("paid", "received", "topup"), 
+        nullable=False
+    )
+    
+    amount = db.Column(db.Numeric(12, 2), nullable=False)
+    
+    status = db.Column(
+        db.Enum("Success", "Expired", "Cancelled", "Pending"),
+        default="Success"
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        server_default=db.func.now(),
+        index=True
+    )

@@ -147,4 +147,151 @@ static Future bookKyc(Map<String,dynamic> data) async {
   return jsonDecode(res.body);
 }
 
+// GET CARD DETAILS
+static Future<Map<String, dynamic>> getCardDetails(String token) async {
+  final res = await http.get(
+    Uri.parse("$baseUrl/card/details"),
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer $token"
+    },
+  );
+
+  if (res.statusCode == 200) {
+    return jsonDecode(res.body);
+  }
+
+  return {};
+}
+
+// LOCK CARD
+static Future lockCard(String token) async {
+  final res = await http.post(
+    Uri.parse("$baseUrl/card/lock"),
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer $token"
+    },
+  );
+
+  return jsonDecode(res.body);
+}
+
+  // UNLOCK CARD
+  static Future unlockCard(String token) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/unlock"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+    );
+
+    return jsonDecode(res.body);
+  }
+
+  // TOGGLE NCMC
+  static Future toggleNcmc(String token, bool enabled) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/toggle-ncmc"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+      body: jsonEncode({"enabled": enabled}),
+    );
+    return jsonDecode(res.body);
+  }
+
+  // TOGGLE TAP & PAY
+  static Future toggleTapPay(String token, bool enabled) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/toggle-tap-pay"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+      body: jsonEncode({"enabled": enabled}),
+    );
+    return jsonDecode(res.body);
+  }
+
+  // CARD PIN OTP
+  static Future cardSendOtp(String token) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/send-otp"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+    );
+    return jsonDecode(res.body);
+  }
+
+  // CARD PIN VERIFY OTP
+  static Future cardVerifyOtp(String token, String otp) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/verify-otp"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+      body: jsonEncode({"otp": otp}),
+    );
+    return jsonDecode(res.body);
+  }
+
+  // SET CARD PIN
+  static Future setCardPin(String token, String pin) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/set-pin"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+      body: jsonEncode({"pin": pin}),
+    );
+    return jsonDecode(res.body);
+  }
+
+  // BLOCK CARD
+  static Future blockCard(String token) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/block"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+    );
+    return jsonDecode(res.body);
+  }
+
+  // UPDATE CARD CONTROLS
+  static Future updateCardControls(String token, Map<String, dynamic> data) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/update-controls"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+      body: jsonEncode(data),
+    );
+    return jsonDecode(res.body);
+  }
+
+  // GET TRANSACTIONS
+  static Future<List<dynamic>> getTransactions(String token) async {
+    final res = await http.get(
+      Uri.parse("$baseUrl/card/transactions"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+    );
+
+    if (res.statusCode == 200) {
+      return jsonDecode(res.body);
+    }
+    return [];
+  }
 }

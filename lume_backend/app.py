@@ -4,17 +4,83 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from config import Config
-from models import db, Student, LumeUser, ScholarApplication, KYCApplication, KYCSlot
+from models import db, Student, LumeUser, ScholarApplication, KYCApplication, KYCSlot, LumeCard, Transaction
 from otp import generate_otp, verify_otp
 import bcrypt
 from datetime import datetime, timedelta, time
 from flask import jsonify
+import random
+
+def generate_card_number():
+
+    while True:
+
+        bin_number = "608014"
+        account = str(random.randint(1000000000, 9999999999))
+        card_number = bin_number + account
+
+        exists = LumeCard.query.filter_by(card_number=card_number).first()
+
+        if not exists:
+            return card_number
+def generate_cvv():
+    return str(random.randint(100, 999))
+def issue_card(student_id):
+
+    user = LumeUser.query.filter_by(student_id=student_id).first()
+    if not user:
+        return
+
+    student = db.session.get(Student, student_id)
+
+    # Check KYC in both tables
+    kyc = KYCApplication.query.filter_by(student_id=student_id).first()
+
+    if not kyc:
+        return
+
+    if user.kyc_status != "Completed" and kyc.kyc_status != "Completed":
+        return
+
+    # Check existing card
+    existing = LumeCard.query.filter_by(user_id=user.id).first()
+
+    if existing:
+        # If card already active → do nothing
+        if existing.card_state != "REPLACED":
+            return
+
+    # Generate card
+    card_number = generate_card_number()
+    cvv = generate_cvv()
+
+    expiry_month = 12
+    expiry_year = student.batch_end_year
+
+    new_card = LumeCard(
+        user_id=user.id,
+        card_number=card_number,
+        cvv=cvv,
+        expiry_month=expiry_month,
+        expiry_year=expiry_year,
+        balance=0.00,
+        card_state="ACTIVE"
+    )
+
+    student.card_issued = True
+
+    db.session.add(new_card)
+    db.session.commit()
+
+    print(f"Card issued for student {student_id}")
 
 app = Flask(__name__)
 app.config.from_object(Config)
 CORS(app)
 
 db.init_app(app)
+with app.app_context():
+    db.create_all()
 jwt = JWTManager(app)
 
 UPLOAD_FOLDER = 'uploads/profile_pics'
@@ -187,38 +253,38 @@ def login_pin():
         return jsonify({"error": "Phone and PIN required"}), 400
 
     user = LumeUser.query.filter_by(phone=phone).first()
-    student = db.session.get(Student, user.student_id)
-    if not student:
-        return jsonify({"error": "Student record missing"}), 404
 
+    # First check if user exists
     if not user:
         return jsonify({"error": "User not registered"}), 404
+
+    student = db.session.get(Student, user.student_id)
+
+    if not student:
+        return jsonify({"error": "Student record missing"}), 404
 
     if not bcrypt.checkpw(pin.encode(), user.pin_hash.encode()):
         return jsonify({"error": "Invalid PIN"}), 401
 
     token = create_access_token(identity=str(user.id))
-    student = db.session.get(Student, user.student_id)
-    
-    # Fallback lookup by reg_no if ID fails
-    if not student and user.reg_no:
-        student = Student.query.filter_by(reg_no=user.reg_no).first()
+    # check card creation
+    issue_card(student.id)
 
     return jsonify({
         "message": "Login successful",
         "token": token,
-        "student_id": student.id if student else None,
-        "full_name": (student.full_name if student else "Lume User") or "Lume User",
-        "mobile": (student.mobile if student else "") or "",
-        "email": (student.email if student else "") or "",
-        "reg_no": (student.reg_no if student else "") or "",
-        "department": (student.department if student else ""),
-        "institute_name": (student.institute_name if student else ""),
-        "dob": str(student.dob) if (student and student.dob) else None,
-        "blood_group": (student.blood_group if student else None),
-        "batch_start_year": str(student.batch_start_year) if (student and student.batch_start_year) else None,
-        "batch_end_year": str(student.batch_end_year) if (student and student.batch_end_year) else None,
-        "profile_image": user.profile_image if (user and user.profile_image) else None
+        "student_id": student.id,
+        "full_name": student.full_name,
+        "mobile": student.mobile,
+        "email": student.email,
+        "reg_no": student.reg_no or "",
+        "department": student.department,
+        "institute_name": student.institute_name,
+        "dob": str(student.dob) if student.dob else None,
+        "blood_group": student.blood_group,
+        "batch_start_year": str(student.batch_start_year) if student.batch_start_year else None,
+        "batch_end_year": str(student.batch_end_year) if student.batch_end_year else None,
+        "profile_image": user.profile_image if user.profile_image else None
     })
 
 
@@ -229,8 +295,11 @@ def login_pin():
 def get_profile():
     user_id = get_jwt_identity()
     user = db.session.get(LumeUser, int(user_id))
+
     if not user:
         return jsonify({"error": "User not found"}), 404
+
+    card = LumeCard.query.filter_by(user_id=user.id).first()
         
     student = db.session.get(Student, user.student_id) if user else None
 
@@ -247,8 +316,13 @@ def get_profile():
             
     if kyc:
         user.kyc_status = kyc.kyc_status
+        
     else:
         user.kyc_status = "Completed" if student.card_issued else "Pending"
+        
+    # Auto issue card if KYC completed
+    if student and user.kyc_status == "Completed":
+        issue_card(student.id)
 
     db.session.commit()
 
@@ -546,6 +620,237 @@ def cleanup_expired_slots():
 
     db.session.commit()
     
+# ================= KYC Check =====================
+@app.route("/admin/kyc/complete/<int:student_id>", methods=["POST"])
+def complete_kyc(student_id):
+
+    kyc = KYCApplication.query.filter_by(student_id=student_id).first()
+
+    if not kyc:
+        return jsonify({"error": "KYC not found"}), 404
+
+    kyc.kyc_status = "Completed"
+
+    issue_card(student_id)
+
+    db.session.commit()
+
+    return jsonify({"success": True})
+    
+# ============ Card Details =============
+@app.route("/card/details", methods=["GET"])
+@jwt_required()
+def get_card_details():
+
+    user_id = get_jwt_identity()
+
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+
+    if not card:
+        return jsonify({"card": None})
+
+    return jsonify({
+        "card_number": card.card_number,
+        "expiry_month": card.expiry_month,
+        "expiry_year": card.expiry_year,
+        "cvv": card.cvv,
+        "balance": float(card.balance),
+        "card_state": card.card_state,
+        "is_pin_set": card.pin_hash is not None,
+        "tap_and_pay_enabled": card.tap_and_pay_enabled,
+        "ncmc_enabled": card.ncmc_enabled,
+        "card_lock": card.card_lock,
+        "pos_enabled": card.pos_enabled,
+        "pos_limit": card.pos_limit,
+        "online_enabled": card.online_enabled,
+        "online_limit": card.online_limit,
+        "contactless_limit": card.contactless_limit,
+        "tokenised_enabled": card.tokenised_enabled,
+        "tokenised_limit": card.tokenised_limit,
+        "atm_enabled": card.atm_enabled,
+        "atm_limit": card.atm_limit
+    })
+# ================= Lock / Unlock Card =================
+@app.route("/card/lock", methods=["POST"])
+@jwt_required()
+def lock_card():
+
+    user_id = int(get_jwt_identity())
+
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+
+    card.card_lock = "LOCKED"
+
+    db.session.commit()
+
+    return jsonify({"success": True, "card_lock": "LOCKED"})
+
+
+@app.route("/card/unlock", methods=["POST"])
+@jwt_required()
+def unlock_card():
+
+    user_id = int(get_jwt_identity())
+
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+
+    card.card_lock = "UNLOCKED"
+
+    db.session.commit()
+
+    return jsonify({"success": True, "card_lock": "UNLOCKED"})
+
+
+@app.route("/card/toggle-ncmc", methods=["POST"])
+@jwt_required()
+def toggle_ncmc():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+
+    card.ncmc_enabled = request.json.get("enabled", False)
+    db.session.commit()
+    return jsonify({"success": True, "ncmc_enabled": card.ncmc_enabled})
+
+
+@app.route("/card/toggle-tap-pay", methods=["POST"])
+@jwt_required()
+def toggle_tap_pay():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+
+    card.tap_and_pay_enabled = request.json.get("enabled", False)
+    db.session.commit()
+    return jsonify({"success": True, "tap_and_pay_enabled": card.tap_and_pay_enabled})
+
+   
+@app.route("/card/send-otp", methods=["POST"])
+@jwt_required()
+def card_send_otp():
+    user_id = get_jwt_identity()
+    user = db.session.get(LumeUser, int(user_id))
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    otp = generate_otp(user.phone)
+    return jsonify({
+        "success": True,
+        "message": "OTP sent successfully",
+        "dev_otp": otp
+    })
+
+@app.route("/card/verify-otp", methods=["POST"])
+@jwt_required()
+def card_verify_otp():
+    user_id = get_jwt_identity()
+    user = db.session.get(LumeUser, int(user_id))
+    otp = request.json.get("otp")
+    
+    if not user or not otp:
+        return jsonify({"error": "Invalid request"}), 400
+        
+    is_valid, message = verify_otp(user.phone, otp)
+    if not is_valid:
+        return jsonify({"success": False, "error": message}), 400
+        
+    return jsonify({"success": True})
+
+@app.route("/card/block", methods=["POST"])
+@jwt_required()
+def block_card_route():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+
+    card.card_state = "BLOCKED"
+    db.session.commit()
+    return jsonify({"success": True, "message": "Card blocked successfully"})
+
+@app.route("/card/set-pin", methods=["POST"])
+@jwt_required()
+def set_card_pin():
+    user_id = int(get_jwt_identity())
+    pin = request.json.get("pin")
+
+    if not pin or not pin.isdigit() or len(pin) != 4:
+        return jsonify({"error": "PIN must be 4 digits"}), 400
+
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+
+    # Hash the 4-digit PIN
+    hashed = bcrypt.hashpw(pin.encode(), bcrypt.gensalt()).decode()
+    card.pin_hash = hashed
+    db.session.commit()
+
+    return jsonify({"success": True, "message": "Card PIN updated successfully"})
+
+# ================ UPDATE CONTROLS ====================
+@app.route("/card/update-controls", methods=["POST"])
+@jwt_required()
+def update_card_controls():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+
+    data = request.json
+    
+    # Update fields if they exist in request data
+    if "pos_enabled" in data: card.pos_enabled = data["pos_enabled"]
+    if "pos_limit" in data: card.pos_limit = data["pos_limit"]
+    
+    if "online_enabled" in data: card.online_enabled = data["online_enabled"]
+    if "online_limit" in data: card.online_limit = data["online_limit"]
+    
+    if "tap_and_pay_enabled" in data: card.tap_and_pay_enabled = data["tap_and_pay_enabled"]
+    if "contactless_limit" in data: card.contactless_limit = data["contactless_limit"]
+    
+    if "tokenised_enabled" in data: card.tokenised_enabled = data["tokenised_enabled"]
+    if "tokenised_limit" in data: card.tokenised_limit = data["tokenised_limit"]
+    
+    if "atm_enabled" in data: card.atm_enabled = data["atm_enabled"]
+    if "atm_limit" in data: card.atm_limit = data["atm_limit"]
+
+    db.session.commit()
+    
+    return jsonify({"success": True, "message": "Controls updated successfully"})
+
+# ================ GET TRANSACTIONS ====================
+@app.route("/card/transactions", methods=["GET"])
+@jwt_required()
+def get_transactions():
+    user_id = int(get_jwt_identity())
+    
+    # Normally fetch the user to verify, but we can query transactions directly
+    txs = Transaction.query.filter_by(user_id=user_id).order_by(Transaction.created_at.desc()).limit(50).all()
+    
+    result = []
+    for tx in txs:
+        date_str = tx.created_at.strftime("%d %b %Y, %I:%M %p") if tx.created_at else "Unknown Date"
+        
+        result.append({
+            "id": tx.id,
+            "title": tx.title,
+            "type": tx.transaction_type,
+            "amount": float(tx.amount),
+            "status": tx.status,
+            "date": date_str
+        })
+        
+    return jsonify(result)
+
 # ============ RUN SERVER =======================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

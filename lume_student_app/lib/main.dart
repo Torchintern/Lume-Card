@@ -20,6 +20,9 @@ import 'screens/about/privacy_policy_screen.dart';
 import 'screens/about/about_lume_screen.dart';
 import 'screens/kyc_form_screen.dart';
 import 'screens/transactions_screen.dart';
+import 'screens/card_center_screen.dart';
+import 'screens/card_benefits_screen.dart';
+import 'screens/card_controls_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -177,6 +180,9 @@ class LumeApp extends StatelessWidget {
             '/notifications': (context) => const NotificationScreen(),
             '/kyc': (context) => const KycFormScreen(),
             "/transactions": (context) => const TransactionsScreen(),
+            "/card-center": (context) => const CardCenterScreen(),
+            "/card-benefits": (context) => const CardBenefitsScreen(),
+            "/card-controls": (context) => const CardControlsScreen(),
           },
         );
       },

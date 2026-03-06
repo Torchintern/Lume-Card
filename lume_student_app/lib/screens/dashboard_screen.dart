@@ -61,6 +61,17 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   bool _isTermsAccepted = false;
   String? _kycRemarks;
   int? _studentId;
+  String? _authToken;
+  
+  // Card sensitive details
+  String? _cardNumber;
+  String? _cardCvv;
+  String? _cardExpiry;
+  bool _isCardLocked = false;
+  bool _isCardBlocked = false;
+  
+  // Transactions
+  List<dynamic> _recentTransactions = [];
   
   // Weather & Greeting State
   String _weatherTemp = "--°C";
@@ -114,6 +125,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       duration: const Duration(milliseconds: 1000),
     );
     _tabController = TabController(length: 4, vsync: this);
+    // Remove setState listener to prevent full-screen rebuilds on every tab switch step
+    // _tabController.addListener(() {
+    //   if (mounted) setState(() {});
+    // });
     
     _flipController = AnimationController(
       vsync: this,
@@ -144,6 +159,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       if (mounted) setState(() {});
 
       final token = prefs.getString("auth_token");
+      _authToken = token;
       if (token != null && token.isNotEmpty) {
         final res = await ApiService.getProfile(token);
         if (res["error"] == null && res["student"] != null && mounted) {
@@ -191,7 +207,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             }
           });
 
-          if (_studentId != null && (_kycStatus.toLowerCase() == "rejected" || _kycStatus.toLowerCase() == "booked" || _kycStatus.toLowerCase() == "under process")) {
+        if (_studentId != null && (_kycStatus.toLowerCase() == "rejected" || _kycStatus.toLowerCase() == "booked" || _kycStatus.toLowerCase() == "under process")) {
           try {
             final kycRes = await ApiService.getKycStatus(_studentId!);
             if (kycRes != null && kycRes is Map) {
@@ -206,6 +222,22 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           } catch (e) {
             debugPrint("Error loading KYC status: $e");
           }
+        }
+
+        // Fetch card details for lock status
+        try {
+          final cardRes = await ApiService.getCardDetails(token);
+          if (cardRes.isNotEmpty) {
+            final String lockStatus = (cardRes["card_lock"] ?? "").toString().toUpperCase();
+            final String cardState = (cardRes["card_state"] ?? "").toString().toUpperCase();
+            
+            setState(() {
+              _isCardLocked = lockStatus == "LOCKED" || cardRes["card_lock"] == true;
+              _isCardBlocked = lockStatus == "BLOCKED" || cardState == "BLOCKED";
+            });
+          }
+        } catch (e) {
+          debugPrint("Error syncing card lock status: $e");
         }
 
         // Save AFTER setState
@@ -228,6 +260,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           if (_kycSlotTime != null) await prefs.setString("kyc_slot_time", _kycSlotTime!);
           if (_studentId != null) await prefs.setInt("student_id", _studentId!);
           if (_profileImageUrl != null) await prefs.setString("user_profile_image", _profileImageUrl!);
+          
+          final txs = await ApiService.getTransactions(token);
+          if (mounted) {
+            _recentTransactions = txs;
+          }
         }
       }
     } catch (e) {
@@ -714,7 +751,7 @@ Future<void> _removeProfilePhoto() async {
                   });
                   await _loadUserProfile();
                 }),
-                  _buildDrawerItem(Icons.credit_card_outlined, "Card Centre", iconColor, () {
+                  _buildDrawerItem(Icons.credit_card_outlined, "Card", iconColor, () {
                     _tabController.animateTo(1);
                   }),
                   _buildDrawerItem(Icons.card_giftcard_outlined, "Rewards", iconColor, () {
@@ -1074,22 +1111,8 @@ Future<void> _removeProfilePhoto() async {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text(
-                            "RuPay",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 26,
-                              fontWeight: FontWeight.w900,
-                              fontStyle: FontStyle.italic,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          const Icon(Icons.play_arrow_rounded, color: Colors.orange, size: 20),
-                        ],
-                      ),
+                      _buildRuPayLogo(fontSize: 18),
+                      const SizedBox(height: 4),
                       const Text(
                         "PREPAID",
                         style: TextStyle(
@@ -1105,6 +1128,39 @@ Future<void> _removeProfilePhoto() async {
               ],
             ),
           ),
+          if (_isCardLocked || _isCardBlocked)
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.6),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withOpacity(0.8),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(_isCardBlocked ? Icons.block_rounded : Icons.lock_rounded, color: Colors.white, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          _isCardBlocked ? "BLOCKED" : "LOCKED",
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1126,202 +1182,253 @@ Future<void> _removeProfilePhoto() async {
           ),
         ],
       ),
-      child: Row(
+      child: Stack(
         children: [
-          // Orange left strip
-          Container(
-            width: 10,
-            decoration: const BoxDecoration(
-              color: Color(0xFFE8820C),
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(24),
-                bottomLeft: Radius.circular(24),
+          Row(
+            children: [
+              // Orange left strip
+              Container(
+                width: 10,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE8820C),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(24),
+                    bottomLeft: Radius.circular(24),
+                  ),
+                ),
               ),
-            ),
-          ),
-          // Main content
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Header: University Logo + Name
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Image.asset("assets/logos/university.png", height: 35),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _userInstitute.isEmpty ? "UNIVERSITY NAME" : _userInstitute,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF1A1A2E),
-                            height: 1.1,
-                            letterSpacing: -0.2,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 8),
-                  _buildSimpleDivider(),
-                  const SizedBox(height: 8),
-
-                  // Student Name
-                  Text(
-                    _userName.toUpperCase(),
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF1A1A2E),
-                      letterSpacing: 0.5,
-                      height: 1.1,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  if (_userDept.isNotEmpty)
-                    Text(
-                      _userDept.toUpperCase(),
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF1A1A2E).withOpacity(0.7),
-                        letterSpacing: 0.1,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-
-                  const SizedBox(height: 12),
-
-                  // Photo + Details row
-                  Row(
+              // Main content
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Profile Photo
-                      Container(
-                        width: 75,
-                        height: 95,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF3F4F6),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: const Color(0xFFE5E7EB), width: 1),
-                          image: _profileImageUrl != null && _profileImageUrl!.isNotEmpty
-                              ? DecorationImage(
-                                  image: NetworkImage("${ApiService.baseUrl}/uploads/profile_pics/$_profileImageUrl"),
-                                  fit: BoxFit.cover,
-                                )
-                              : null,
-                        ),
-                        child: _profileImageUrl == null || _profileImageUrl!.isEmpty
-                            ? Center(
-                                child: Text(
-                                  _getInitials(_userName),
-                                  style: const TextStyle(
-                                    fontSize: 26,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF9CA3AF),
-                                  ),
-                                ),
-                              )
-                            : null,
-                      ),
-                      const SizedBox(width: 10),
-                      // Detail rows
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildCardDetailRow("STUDENT ID", _userRegNo.isEmpty ? "-" : _userRegNo),
-                            const SizedBox(height: 5),
-                            _buildCardDetailRow("BATCH", _userBatch.isEmpty ? "-" : _userBatch),
-                            const SizedBox(height: 5),
-                            _buildCardDetailRow("PHONE", _userPhone.isEmpty ? "-" : _userPhone),
-                            const SizedBox(height: 5),
-                            _buildCardDetailRow("BLOOD GR", _userBloodGroup.isEmpty ? "-" : _userBloodGroup),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const Spacer(),
-
-                  // Footer: Signature + QR
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Signature column
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      // Header: University Logo + Name
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          SizedBox(
-                            width: 70,
-                            height: 20,
-                            child: CustomPaint(painter: SignaturePainter()),
-                          ),
-                          Container(
-                            width: 70,
-                            height: 1,
-                            color: const Color(0xFFD1D5DB),
-                            margin: const EdgeInsets.symmetric(vertical: 2),
-                          ),
-                          const Text(
-                            "REGISTRAR",
-                            style: TextStyle(
-                              fontSize: 7,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF6B7280),
-                              letterSpacing: 0.5,
+                          Image.asset("assets/logos/university.png", height: 35),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _userInstitute.isEmpty ? "UNIVERSITY NAME" : _userInstitute,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF1A1A2E),
+                                height: 1.1,
+                                letterSpacing: -0.2,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
                       ),
-                      
-                      // QR Code
-                      Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          border: Border.all(color: const Color(0xFFE5E7EB)),
-                          borderRadius: BorderRadius.circular(6),
+    
+                      const SizedBox(height: 8),
+                      _buildSimpleDivider(),
+                      const SizedBox(height: 8),
+    
+                      // Student Name
+                      Text(
+                        _userName.toUpperCase(),
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF1A1A2E),
+                          letterSpacing: 0.5,
+                          height: 1.1,
                         ),
-                        child: QrImageView(
-                          data: _userRegNo.isEmpty ? "LUME_STUDENT" : _userRegNo,
-                          version: QrVersions.auto,
-                          size: 60.0,
-                          padding: EdgeInsets.zero,
+                      ),
+                      const SizedBox(height: 2),
+                      if (_userDept.isNotEmpty)
+                        Text(
+                          _userDept.toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF1A1A2E).withOpacity(0.7),
+                            letterSpacing: 0.1,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
+    
+                      const SizedBox(height: 12),
+    
+                      // Photo + Details row
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Profile Photo
+                          Container(
+                            width: 75,
+                            height: 95,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF3F4F6),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: const Color(0xFFE5E7EB), width: 1),
+                              image: _profileImageUrl != null && _profileImageUrl!.isNotEmpty
+                                  ? DecorationImage(
+                                      image: NetworkImage("${ApiService.baseUrl}/uploads/profile_pics/$_profileImageUrl"),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : null,
+                            ),
+                            child: _profileImageUrl == null || _profileImageUrl!.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      _getInitials(_userName),
+                                      style: const TextStyle(
+                                        fontSize: 26,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF9CA3AF),
+                                      ),
+                                    ),
+                                  )
+                                : null,
+                          ),
+                          const SizedBox(width: 10),
+                          // Detail rows
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildCardDetailRow("STUDENT ID", _userRegNo.isEmpty ? "-" : _userRegNo),
+                                const SizedBox(height: 5),
+                                _buildCardDetailRow("BATCH", _userBatch.isEmpty ? "-" : _userBatch),
+                                const SizedBox(height: 5),
+                                _buildCardDetailRow("PHONE", _userPhone.isEmpty ? "-" : _userPhone),
+                                const SizedBox(height: 5),
+                                _buildCardDetailRow("BLOOD GR", _userBloodGroup.isEmpty ? "-" : _userBloodGroup),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+    
+                      const Spacer(),
+    
+                      // Footer: Signature + QR
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          // Signature column
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: 70,
+                                height: 20,
+                                child: CustomPaint(painter: SignaturePainter()),
+                              ),
+                              Container(
+                                width: 70,
+                                height: 1,
+                                color: const Color(0xFFD1D5DB),
+                                margin: const EdgeInsets.symmetric(vertical: 2),
+                              ),
+                              const Text(
+                                "REGISTRAR",
+                                style: TextStyle(
+                                  fontSize: 7,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF6B7280),
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                          
+                          // QR Code
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              border: Border.all(color: const Color(0xFFE5E7EB)),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: QrImageView(
+                              data: _userRegNo.isEmpty ? "LUME_STUDENT" : _userRegNo,
+                              version: QrVersions.auto,
+                              size: 60.0,
+                              padding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ],
+                      ),
+    
+                      const SizedBox(height: 8),
+                      const Text(
+                        "This card is valid in India only.",
+                        textAlign: TextAlign.start,
+                        style: TextStyle(
+                          fontSize: 6.5, 
+                          color: Color(0xFF9CA3AF),
+                          height: 1.1,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
-
-                  const SizedBox(height: 8),
-                  const Text(
-                    "This card is valid in India only.",
-                    textAlign: TextAlign.start,
-                    style: TextStyle(
-                      fontSize: 6.5, 
-                      color: Color(0xFF9CA3AF),
-                      height: 1.1,
+                ),
+              ),
+            ],
+          ),
+          if (_isCardLocked || _isCardBlocked)
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.6),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withOpacity(0.8),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(_isCardBlocked ? Icons.block_rounded : Icons.lock_rounded, color: Colors.white, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          _isCardBlocked ? "BLOCKED" : "LOCKED",
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
+                ),
               ),
             ),
-          ),
         ],
       ),
+    );
+  }
 
+  Widget _buildRuPayLogo({double fontSize = 18}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Image.asset(
+        "assets/logos/rupay.png",
+        height: fontSize + 6,
+        fit: BoxFit.contain,
+      ),
     );
   }
 
@@ -1369,6 +1476,42 @@ Future<void> _removeProfilePhoto() async {
   }
 
 
+
+  Widget _buildProfileIcon({required ColorScheme colorScheme, bool isOnDark = false}) {
+    final Color iconColor = isOnDark ? Colors.white : colorScheme.primary;
+    final Color borderColor = isOnDark ? Colors.white.withOpacity(0.5) : colorScheme.primary.withOpacity(0.2);
+    final Color bgColor = isOnDark ? Colors.white.withOpacity(0.2) : colorScheme.primary.withOpacity(0.1);
+
+    return IconButton(
+      icon: Container(
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: bgColor,
+          shape: BoxShape.circle,
+          border: Border.all(color: borderColor, width: 1.5),
+        ),
+        child: CircleAvatar(
+          key: ValueKey(_profileImageUrl),
+          radius: 18,
+          backgroundColor: isOnDark ? Colors.white24 : colorScheme.primary.withOpacity(0.05),
+          backgroundImage: _profileImageUrl != null && _profileImageUrl!.isNotEmpty
+          ? NetworkImage("${ApiService.baseUrl}/uploads/profile_pics/$_profileImageUrl")
+          : null,
+          child: _profileImageUrl == null || _profileImageUrl!.isEmpty
+              ? Text(
+                  _getInitials(_userName),
+                  style: TextStyle(
+                    color: iconColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                )
+              : null,
+        ),
+      ),
+      onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+    );
+  }
 
   Widget _buildWeatherAccents() {
     switch (_currentCondition) {
@@ -1440,262 +1583,266 @@ Future<void> _removeProfilePhoto() async {
     final colorScheme = Theme.of(context).colorScheme;
     final size = MediaQuery.of(context).size;
 
-    return Scaffold(
-      key: _scaffoldKey,
-      backgroundColor: colorScheme.surface,
-      drawer: _buildDrawer(context, colorScheme),
-      body: Stack(
-          children: [
-            // Background Gradient accent
-            Positioned(
-              top: -100,
-              right: -100,
-              child: Container(
-                width: 300,
-                height: 300,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    colors: [
-                      colorScheme.secondary.withOpacity(0.4),
-                      Colors.transparent,
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            
-            Column(
+    return AnimatedBuilder(
+      animation: _tabController,
+      builder: (context, child) {
+        final bool isHome = _tabController.index == 0;
+        final int currentIndex = _tabController.index;
+        
+        return Scaffold(
+          key: _scaffoldKey,
+          backgroundColor: colorScheme.surface,
+          drawer: _buildDrawer(context, colorScheme),
+          body: Stack(
               children: [
-                // Fixed Premium Header
-                Container(
-                  height: size.height * 0.35,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: _weatherThemes[_currentCondition]!.gradientColors,
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+                // Background Gradient accent
+                Positioned(
+                  top: -100,
+                  right: -100,
+                  child: Container(
+                    width: 300,
+                    height: 300,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          colorScheme.secondary.withOpacity(0.4),
+                          Colors.transparent,
+                        ],
+                      ),
                     ),
                   ),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      // Dynamic Weather Accents
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 1000),
-                        child: Container(
-                          key: ValueKey(_currentCondition),
-                          child: _buildWeatherAccents(),
+                ),
+                
+                Column(
+                  children: [
+                    if (isHome)
+                    // Fixed Premium Header
+                    Container(
+                      height: size.height * 0.35,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: _weatherThemes[_currentCondition]!.gradientColors,
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
                         ),
                       ),
-                      
-                      // App Bar Actions & Leading
-                      Positioned(
-                        top: MediaQuery.of(context).padding.top + 10,
-                        left: 0,
-                        right: 0,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              IconButton(
-                                icon: Container(
-                                  padding: const EdgeInsets.all(2),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.2),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white.withOpacity(0.5), width: 1.5),
-                                  ),
-                                  child: CircleAvatar(
-                                    key: ValueKey(_profileImageUrl),
-                                    radius: 18,
-                                    backgroundColor: Colors.white24,
-                                    backgroundImage: _profileImageUrl != null && _profileImageUrl!.isNotEmpty
-                                    ? NetworkImage("${ApiService.baseUrl}/uploads/profile_pics/$_profileImageUrl")
-                                    : null,
-                                    child: _profileImageUrl == null || _profileImageUrl!.isEmpty
-                                        ? Text(
-                                            _getInitials(_userName),
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
-                                ),
-                                onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                      // Header Content
-                      Positioned(
-                        bottom: 40,
-                        left: 24,
-                        right: 24,
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    "${_getGreeting()} ${_weatherThemes[_currentCondition]!.greetingSuffix}",
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.9),
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      letterSpacing: 0.2,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    _userName,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 26,
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: -0.8,
-                                      height: 1.1,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withOpacity(0.1),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Text(
-                                      _getFormattedDate(),
-                                      style: TextStyle(
-                                        color: Colors.white.withOpacity(0.8),
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          // Dynamic Weather Accents
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 1000),
+                            child: Container(
+                              key: ValueKey(_currentCondition),
+                              child: _buildWeatherAccents(),
                             ),
-                            const SizedBox(width: 12),
-                            // Glassmorphism Weather Card
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(24),
-                              child: BackdropFilter(
-                                filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                                child: Container(
-                                  padding: const EdgeInsets.all(14),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.12),
-                                    borderRadius: BorderRadius.circular(24),
-                                    border: Border.all(
-                                      color: Colors.white.withOpacity(0.2),
-                                      width: 1.2,
-                                    ),
-                                  ),
+                          ),
+                          
+                          // Profile Icon removed from here, now in global Stack for consistency
+
+                          // Header Content
+                          Positioned(
+                            bottom: 40,
+                            left: 24,
+                            right: 24,
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Expanded(
                                   child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Icon(_weatherIcon, color: Colors.white, size: 28),
-                                      const SizedBox(height: 6),
                                       Text(
-                                        _weatherTemp,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w800,
-                                          letterSpacing: -0.5,
+                                        "${_getGreeting()} ${_weatherThemes[_currentCondition]!.greetingSuffix}",
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.9),
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: 0.2,
                                         ),
                                       ),
+                                      const SizedBox(height: 4),
                                       Text(
-                                        _weatherDesc.toUpperCase(),
-                                        style: TextStyle(
-                                          color: Colors.white.withOpacity(0.7),
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w600,
+                                        _userName,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 26,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: -0.8,
+                                          height: 1.1,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Text(
+                                          _getFormattedDate(),
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(0.8),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w500,
+                                          ),
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
-                              ),
+                                const SizedBox(width: 12),
+                                // Glassmorphism Weather Card
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(24),
+                                  child: BackdropFilter(
+                                    filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(14),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.12),
+                                        borderRadius: BorderRadius.circular(24),
+                                        border: Border.all(
+                                          color: Colors.white.withOpacity(0.2),
+                                          width: 1.2,
+                                        ),
+                                      ),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(_weatherIcon, color: Colors.white, size: 28),
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            _weatherTemp,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.w800,
+                                              letterSpacing: -0.5,
+                                            ),
+                                          ),
+                                          Text(
+                                            _weatherDesc.toUpperCase(),
+                                            style: TextStyle(
+                                              color: Colors.white.withOpacity(0.7),
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
+                          ),
+                        ],
+                      ),
+                    )
+                    else 
+                    SizedBox(height: MediaQuery.of(context).padding.top + 56),
+
+                    // Content Area
+                    Expanded(
+                      child: Container(
+                        transform: isHome ? Matrix4.translationValues(0, -25, 0) : null,
+                        decoration: BoxDecoration(
+                          color: colorScheme.surface,
+                          borderRadius: isHome ? const BorderRadius.only(
+                            topLeft: Radius.circular(32),
+                            topRight: Radius.circular(32),
+                          ) : null,
+                        ),
+                        child: TabBarView(
+                          controller: _tabController,
+                          children: [
+                            _TabKeepAliveWrapper(child: _buildHomeTab(context, colorScheme)),
+                            _TabKeepAliveWrapper(child: _buildCardTab(context, colorScheme)),
+                            _TabKeepAliveWrapper(child: _buildRewardsTab(context, colorScheme)),
+                            _TabKeepAliveWrapper(child: _buildTransitTab(context, colorScheme)),
                           ],
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
 
-                // Navigation Tabs Container
-                Container(
-                  width: double.infinity,
-                  transform: Matrix4.translationValues(0, -25, 0),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surface,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(32),
-                      topRight: Radius.circular(32),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 10,
-                        offset: const Offset(0, -5),
-                      ),
-                    ],
-                  ),
-                  child: TabBar(
-                    controller: _tabController,
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                    indicator: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      color: colorScheme.primary.withOpacity(0.1),
-                    ),
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    dividerColor: Colors.transparent,
-                    labelColor: colorScheme.primary,
-                    unselectedLabelColor: Colors.grey.shade500,
-                    labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-                    unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                    tabs: const [
-                      Tab(icon: Icon(Icons.home_rounded), text: "Home"),
-                      Tab(icon: Icon(Icons.credit_card_rounded), text: "Card"),
-                      Tab(icon: Icon(Icons.emoji_events_rounded), text: "Rewards"),
-                      Tab(icon: Icon(Icons.directions_bus_rounded), text: "Transit"),
-                    ],
-                  ),
-                ),
-
-                // Content Area
-                Expanded(
+                // Custom Header for other tabs
+                if (!isHome)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
                   child: Container(
+                    height: MediaQuery.of(context).padding.top + 56,
                     color: colorScheme.surface,
-                    transform: Matrix4.translationValues(0, -25, 0),
-                    child: TabBarView(
-                      controller: _tabController,
-                      children: [
-                        _buildHomeTab(context, colorScheme),
-                        _buildCardTab(context, colorScheme),
-                        _buildRewardsTab(context, colorScheme),
-                        _buildTransitTab(context, colorScheme),
-                      ],
+                    child: Padding(
+                      padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
+                      child: Center(
+                        child: Text(
+                          ["Home", "Card", "Rewards", "Transit"][currentIndex],
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
+                ),
+
+                // Fixed Profile Icon - Consistent across all tabs
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + 10,
+                  left: 12,
+                  child: _buildProfileIcon(colorScheme: colorScheme, isOnDark: isHome),
                 ),
               ],
             ),
-          ],
-        ),
-      );
+          bottomNavigationBar: Container(
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 20,
+                  offset: const Offset(0, -5),
+                ),
+              ],
+            ),
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: TabBar(
+                  controller: _tabController,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  indicator: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    color: colorScheme.primary.withOpacity(0.1),
+                  ),
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  dividerColor: Colors.transparent,
+                  labelColor: colorScheme.primary,
+                  unselectedLabelColor: Colors.grey.shade500,
+                  labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                  unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  tabs: const [
+                    Tab(icon: Icon(Icons.home_rounded), text: "Home"),
+                    Tab(icon: Icon(Icons.credit_card_rounded), text: "Card"),
+                    Tab(icon: Icon(Icons.emoji_events_rounded), text: "Rewards"),
+                    Tab(icon: Icon(Icons.directions_bus_rounded), text: "Transit"),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildHomeTab(BuildContext context, ColorScheme colorScheme) {
@@ -2341,7 +2488,7 @@ Future<void> _removeProfilePhoto() async {
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: colorScheme.primary,
-                foregroundColor: colorScheme.onPrimary,
+                foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
@@ -2599,176 +2746,895 @@ Future<void> _removeProfilePhoto() async {
       ],
     );
   }
+
+  void _showCardDetails() async {
+    if (_authToken == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Authentication session expired. Please login again.")),
+      );
+      return;
+    }
+
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final res = await ApiService.getCardDetails(_authToken!);
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+
+      if (res.isEmpty || res["card_number"] == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Could not retrieve card details.")),
+        );
+        return;
+      }
+
+      setState(() {
+      _cardNumber = res["card_number"];
+      _cardCvv = res["cvv"].toString();
+      _isCardLocked = res["card_lock"] == "LOCKED" || res["card_lock"] == true;
+        
+        final month = res["expiry_month"].toString().padLeft(2, '0');
+        final year = res["expiry_year"].toString();
+        final shortYear = year.length > 2 ? year.substring(year.length - 2) : year;
+        _cardExpiry = "$month/$shortYear";
+      });
+
+      _displayCardDetailsDialog();
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: ${e.toString()}")),
+        );
+      }
+    }
+  }
+
+  void _showLockCardSheet() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1E293B) : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 20,
+                offset: const Offset(0, -5),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                height: 4,
+                width: 40,
+                decoration: BoxDecoration(
+                  color: colorScheme.onSurfaceVariant.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              const SizedBox(height: 32),
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: colorScheme.primary.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _isCardLocked ? Icons.lock_open_rounded : Icons.lock_rounded,
+                  size: 44,
+                  color: colorScheme.primary,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                _isCardLocked ? "Unlock Card?" : "Lock Card?",
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  color: colorScheme.onSurface,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _isCardLocked
+                    ? "Unlocking will re-enable all your card transactions instantly."
+                    : "Your card will be temporarily disabled for ATM, POS and online transactions.",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 15,
+                  color: colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 36),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 56,
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(sheetContext),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: colorScheme.outlineVariant.withOpacity(0.5)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: Text(
+                          "Cancel",
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: SizedBox(
+                      height: 56,
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          if (_authToken == null) return;
+                          Navigator.pop(sheetContext);
+                          
+                          // Show loading indicator
+                          showDialog(
+                            context: context,
+                            barrierDismissible: false,
+                            builder: (dialogContext) => const Center(child: CircularProgressIndicator()),
+                          );
+
+                          bool success = false;
+                          try {
+                            if (_isCardLocked) {
+                              final res = await ApiService.unlockCard(_authToken!);
+                              success = res["success"] == true;
+                            } else {
+                              final res = await ApiService.lockCard(_authToken!);
+                              success = res["success"] == true;
+                            }
+                          } catch (e) {
+                            debugPrint("Error toggling card lock: $e");
+                          }
+
+                          if (mounted) Navigator.pop(context); // Close loading dialog
+
+                          if (success) {
+                            setState(() {
+                              _isCardLocked = !_isCardLocked;
+                            });
+                            _showCardStatusDialog(
+                              _isCardLocked
+                                  ? "Card Locked Successfully"
+                                  : "Card Unlocked Successfully",
+                            );
+                          } else {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: const Text("Failed to update card status. Please try again."),
+                                  backgroundColor: colorScheme.error,
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
+                              );
+                            }
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: colorScheme.primary,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: Text(
+                          _isCardLocked ? "Yes, Unlock" : "Yes, Lock",
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+
+  void _showCardStatusDialog(String message) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.5),
+      builder: (context) {
+        return BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 8.0, sigmaY: 8.0),
+          child: Dialog(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primary.withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.check_circle_rounded,
+                      size: 48,
+                      color: colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: colorScheme.onSurface,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    "Your card preferences have been updated successfully.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: colorScheme.onSurfaceVariant.withOpacity(0.8),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 54,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: colorScheme.primary,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: const Text(
+                        "Great!",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+
+  void _displayCardDetailsDialog() {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.4),
+      builder: (context) {
+        bool isNumberHidden = true;
+        bool isCvvHidden = true;
+
+        return BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 8.0, sigmaY: 8.0),
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              final String displayNum = isNumberHidden
+                  ? "****\n****\n****\n${_cardNumber?.substring((_cardNumber?.length ?? 4) - 4) ?? "0000"}"
+                  : _cardNumber?.replaceAllMapped(RegExp(r".{4}"), (match) => "${match.group(0)}\n").trim() ?? "0000\n0000\n0000\n0000";
+
+              return Dialog(
+                backgroundColor: Colors.transparent,
+                insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Vertical Card Container
+                    Container(
+                      width: 260, // standard vertical ratio
+                      height: 440,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: const [Color(0xFF4B5563), Color(0xFF374151)], // Ash grey for both themes
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 30,
+                            offset: const Offset(0, 15),
+                          ),
+                          BoxShadow(
+                            color: Colors.white.withOpacity(0.1),
+                            blurRadius: 0,
+                            spreadRadius: 1, // Inner subtle border
+                          ),
+                        ],
+                      ),
+                      child: Stack(
+                        children: [
+                          // Background Decorative Pattern
+                          Positioned.fill(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(24),
+                              child: CustomPaint(
+                                painter: CardBackgroundPainter(
+                                  color: Colors.white,
+                                  isDark: true, // Force low opacity decorations
+                                ),
+                              ),
+                            ),
+                          ),
+                          
+                          Padding(
+                            padding: const EdgeInsets.all(24.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Top Row: Bank Name & Contactless
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      "LUME",
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.9),
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 2.0,
+                                      ),
+                                    ),
+                                    Icon(Icons.wifi_rounded, color: Colors.white.withOpacity(0.8), size: 28),
+                                  ],
+                                ),
+                                const SizedBox(height: 30),
+                                
+                                // Chip & Tap Icon
+                                Container(
+                                  width: 42,
+                                  height: 52,
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber.shade200,
+                                    borderRadius: BorderRadius.circular(8),
+                                    gradient: LinearGradient(
+                                      colors: [Colors.amber.shade200, Colors.amber.shade400],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 4, offset: const Offset(0, 2)),
+                                    ],
+                                  ),
+                                  child: CustomPaint(painter: ChipLinesPainter()),
+                                ),
+                                
+                                const Spacer(),
+                                
+                                // Card Number (Vertical format)
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        displayNum,
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: 4.0,
+                                          height: 1.8,
+                                          shadows: [
+                                            Shadow(color: Colors.black.withOpacity(0.3), offset: const Offset(0, 2), blurRadius: 4),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      icon: Icon(
+                                        isNumberHidden ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                                        color: Colors.white.withOpacity(0.7),
+                                      ),
+                                      onPressed: () => setState(() => isNumberHidden = !isNumberHidden),
+                                    ),
+                                  ],
+                                ),
+                                
+                                const SizedBox(height: 20),
+                                
+                              // Bottom Row: Name, Expiry, CVV
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    // User Name
+                                    Expanded(
+                                      flex: 5,
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            "CARDHOLDER",
+                                            style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 8, letterSpacing: 1.0),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            _userName.toUpperCase(),
+                                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 1.5),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.visible,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    
+                                    const SizedBox(width: 8),
+
+                                    // Valid Thru
+                                    Expanded(
+                                      flex: 3,
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            "VALID THRU",
+                                            style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 8, letterSpacing: 1.0),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            _cardExpiry ?? "--/--",
+                                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 1.0),
+                                            textAlign: TextAlign.right,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                
+                                const SizedBox(height: 16),
+                                
+                                // CVV Row & RuPay
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          "CVV",
+                                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 8, letterSpacing: 1.0),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Row(
+                                          children: [
+                                            Text(
+                                              isCvvHidden ? "***" : _cardCvv ?? "---",
+                                              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 2.0),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            InkWell(
+                                              onTap: () => setState(() => isCvvHidden = !isCvvHidden),
+                                              child: Icon(
+                                                isCvvHidden ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                                                color: Colors.white.withOpacity(0.7),
+                                                size: 16,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                    
+                                    // RuPay Logo Mock
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: [
+                                        _buildRuPayLogo(fontSize: 14),
+                                        const SizedBox(height: 4),
+                                        const Text(
+                                          "PREPAID",
+                                          style: TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: 2.0,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 32),
+                    
+                    // Close Button
+                    InkWell(
+                      onTap: () => Navigator.pop(context),
+                      borderRadius: BorderRadius.circular(30),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surface,
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [
+                            BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 4)),
+                          ],
+                        ),
+                        child: Text(
+                          "Close",
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCardActions(BuildContext context, ColorScheme colorScheme) {
+    final iconColor = colorScheme.primary;
+
+    Widget actionItem(IconData icon, String label, VoidCallback? onTap, {bool isEnabled = true}) {
+      return Column(
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(22),
+            onTap: isEnabled ? onTap : null,
+            child: Opacity(
+              opacity: isEnabled ? 1.0 : 0.5,
+              child: Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: (isEnabled ? iconColor : Colors.grey).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Icon(icon, color: isEnabled ? iconColor : Colors.grey, size: 32),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            label,
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 14,
+              color: isEnabled 
+                  ? Theme.of(context).colorScheme.onSurface
+                  : Colors.grey,
+            ),
+          )
+        ],
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        actionItem(
+          Icons.visibility_rounded,
+          "View Details",
+          () => _showCardDetails(),
+          isEnabled: !_isCardBlocked,
+        ),
+        actionItem(
+          _isCardLocked ? Icons.lock_open_rounded : Icons.lock_rounded,
+          _isCardLocked ? "Unlock Card" : "Lock Card",
+          () {
+            _showLockCardSheet();
+          },
+          isEnabled: !_isCardBlocked,
+        ),
+        actionItem(
+          Icons.receipt_long_rounded,
+          "Transactions",
+          () => Navigator.pushNamed(context, "/transactions"),
+          isEnabled: true, // Always allowed
+        ),
+        actionItem(
+          Icons.settings_rounded,
+          "Settings",
+          () async {
+            await Navigator.pushNamed(context, "/card-center");
+            _loadUserProfile();
+          },
+          isEnabled: true, // Always allowed
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTransactionsSection(BuildContext context, ColorScheme colorScheme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              "Card Transactions",
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            GestureDetector(
+              onTap: () => Navigator.pushNamed(context, "/transactions"),
+              child: Row(
+                children: [
+                  Text(
+                    "View all",
+                    style: TextStyle(
+                      color: colorScheme.primary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.chevron_right_rounded, size: 18, color: colorScheme.primary),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        
+        if (_recentTransactions.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 32),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.3)),
+            ),
+            child: Column(
+              children: [
+                Icon(Icons.receipt_long_outlined, size: 48, color: colorScheme.onSurfaceVariant.withOpacity(0.5)),
+                const SizedBox(height: 12),
+                Text(
+                  "No transactions done",
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          ..._recentTransactions.take(5).map((tx) => _buildTransactionItem(tx, colorScheme)).toList(),
+      ],
+    );
+  }
+
+  Widget _buildTransactionItem(dynamic tx, ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    IconData icon;
+    Color iconColor;
+    Color iconBgColor;
+    Color amountColor;
+    String prefix;
+
+    switch (tx["type"]) {
+      case "paid":
+        icon = Icons.arrow_upward_rounded;
+        iconColor = Colors.redAccent;
+        iconBgColor = Colors.redAccent.withOpacity(0.1);
+        amountColor = Colors.redAccent;
+        prefix = "-";
+        break;
+      case "received":
+        icon = Icons.arrow_downward_rounded;
+        iconColor = Colors.green;
+        iconBgColor = Colors.green.withOpacity(0.1);
+        amountColor = Colors.green;
+        prefix = "+";
+        break;
+      default: // topup
+        icon = Icons.account_balance_wallet_rounded;
+        iconColor = const Color(0xFF0284C7);
+        iconBgColor = const Color(0xFFE0F2FE);
+        amountColor = const Color(0xFF0284C7);
+        prefix = "+";
+    }
+
+    Color statusColor;
+    switch (tx["status"].toString().toLowerCase()) {
+      case "success":
+        statusColor = Colors.green;
+        break;
+      case "expired":
+      case "cancelled":
+        statusColor = Colors.redAccent;
+        break;
+      default:
+        statusColor = Colors.orange;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.3 : 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+        border: Border.all(color: colorScheme.outlineVariant.withOpacity(isDark ? 0.5 : 0.2)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: iconBgColor,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: iconColor, size: 20),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  tx["title"],
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  tx["date"],
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: colorScheme.onSurfaceVariant.withOpacity(0.8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                "$prefix₹${tx["amount"].toStringAsFixed(2)}",
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: amountColor,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                tx["status"],
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: statusColor,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TabKeepAliveWrapper extends StatefulWidget {
+  final Widget child;
+  const _TabKeepAliveWrapper({required this.child});
+
+  @override
+  State<_TabKeepAliveWrapper> createState() => _TabKeepAliveWrapperState();
+}
+
+class _TabKeepAliveWrapperState extends State<_TabKeepAliveWrapper> with AutomaticKeepAliveClientMixin {
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
+  }
+
+  @override
+  bool get wantKeepAlive => true;
 }
 
 
 
 // --- Custom Painters ---
 
-Widget _buildTransactionsSection(BuildContext context, ColorScheme colorScheme) {
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-
-      /// Header
-      Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            "Card Transactions",
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-              color: colorScheme.onSurface,
-            ),
-          ),
-          InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () {
-              Navigator.pushNamed(context, "/transactions");
-            },
-            child: Row(
-              children: [
-                Text(
-                  "View All",
-                  style: TextStyle(
-                    color: colorScheme.primary,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  size: 14,
-                  color: colorScheme.primary,
-                )
-              ],
-            ),
-          ),
-        ],
-      ),
-
-      const SizedBox(height: 14),
-
-      /// Transaction Tile
-      InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: () {
-          Navigator.pushNamed(context, "/transactions");
-        },
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: colorScheme.surface,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: colorScheme.outlineVariant.withOpacity(0.5),
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: colorScheme.primary.withOpacity(0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.receipt_long_rounded,
-                  color: colorScheme.primary,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 14),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Recent Transactions",
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        color: colorScheme.onSurface,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      "View your latest card activity",
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              Icon(
-                Icons.chevron_right_rounded,
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ],
-          ),
-        ),
-      ),
-    ],
-  );
-}
-
-Widget _buildCardActions(BuildContext context, ColorScheme colorScheme) {
-  final iconColor = colorScheme.primary;
-
-  Widget actionItem(IconData icon, String label, VoidCallback onTap) {
-    return Column(
-      children: [
-        InkWell(
-          borderRadius: BorderRadius.circular(22),
-          onTap: onTap,
-          child: Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(22),
-            ),
-            child: Icon(icon, color: iconColor, size: 32),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          label,
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            fontSize: 14,
-            color: colorScheme.onSurface,
-          ),
-        )
-      ],
-    );
-  }
-
-  return Row(
-    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-    children: [
-      actionItem(
-        Icons.visibility_rounded,
-        "View Details",
-        () {},
-      ),
-      actionItem(
-        Icons.lock_outline_rounded,
-        "Lock Card",
-        () {},
-      ),
-      actionItem(
-        Icons.settings_rounded,
-        "Settings",
-        () {},
-      ),
-    ],
-  );
-}
 
 class CardDecorativePainter extends CustomPainter {
   final Color color;

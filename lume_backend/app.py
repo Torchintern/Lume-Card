@@ -668,8 +668,181 @@ def get_card_details():
         "tokenised_enabled": card.tokenised_enabled,
         "tokenised_limit": card.tokenised_limit,
         "atm_enabled": card.atm_enabled,
-        "atm_limit": card.atm_limit
+        "atm_limit": card.atm_limit,
+        "is_freezed": card.is_freezed,
+        "contactless_enabled": card.contactless_enabled,
+        "order_status": card.order_status
     })
+
+# ================= Order Physical Card =================
+@app.route("/card/order", methods=["POST"])
+@jwt_required()
+def order_card():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+    
+    if card.order_status != "NOT_REQUESTED":
+        return jsonify({"error": "Card already ordered"}), 400
+    
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Missing delivery details"}), 400
+        
+    card.delivery_address = data.get("address")
+    card.delivery_city = data.get("city")
+    card.delivery_state = data.get("state")
+    card.delivery_pincode = data.get("pincode")
+    card.delivery_phone = data.get("phone")
+        
+    card.order_status = "ORDERED"
+    db.session.commit()
+    return jsonify({
+        "success": True, 
+        "order_status": "ORDERED",
+        "message": "Physical card ordered successfully!"
+    })
+
+# ================= Reissue Card (after block) =================
+@app.route("/card/reissue", methods=["POST"])
+@jwt_required()
+def reissue_card():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+
+    # In production, we usually want guards, but for development and 
+    # lost-in-transit cases, we allow reissue if a previous order was at least made.
+    if card.order_status == "NOT_REQUESTED":
+        return jsonify({"error": "No physical card exists to reissue"}), 400
+
+    # We proceed even if not BLOCKED or RECEIVED to allow user to replace their 
+    # card anytime (e.g. they changed their mind or lost it immediately).
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Missing reissue details"}), 400
+
+    payment_success = data.get("payment_success", False)
+    reason = data.get("reason", "")
+
+    # Save reason and payment status regardless
+    card.reissue_reason = reason
+    card.reissue_payment_success = payment_success
+
+    if not payment_success:
+        db.session.commit()
+        return jsonify({"success": False, "error": "Payment not successful"}), 402
+
+    # ── Payment SUCCESS ──────────────────────────────────────────────────────
+    # 1. New delivery address
+    card.delivery_address = data.get("address")
+    card.delivery_city    = data.get("city")
+    card.delivery_state   = data.get("state")
+    card.delivery_pincode = data.get("pincode")
+    card.delivery_phone   = data.get("phone")
+
+    # 2. Generate new card credentials
+    card.card_number  = generate_card_number()
+    card.cvv          = generate_cvv()
+
+    # Expiry year from student batch_end_year
+    user = db.session.get(LumeUser, user_id)
+    if user and user.student and user.student.batch_end_year:
+        card.expiry_year  = user.student.batch_end_year
+        card.expiry_month = 12
+    else:
+        # Fallback to current year + 4
+        card.expiry_year  = datetime.now().year + 4
+        card.expiry_month = 12
+
+    # 3. Reset card state & lock
+    card.card_state = "ACTIVE"
+    card.card_lock  = "UNLOCKED"
+    card.is_freezed = False
+
+    # 4. Reset card PIN (user must set a new PIN)
+    card.pin_hash = None
+
+    # 5. Reset all controls to defaults (disabled)
+    card.pos_enabled          = False
+    card.pos_limit            = 0
+    card.online_enabled       = False
+    card.online_limit         = 0
+    card.contactless_enabled  = False
+    card.contactless_limit    = 0
+    card.tokenised_enabled    = False
+    card.tokenised_limit      = 0
+    card.atm_enabled          = False
+    card.atm_limit            = 0
+
+    # 6. Reset NFC toggles
+    card.tap_and_pay_enabled  = False
+    card.ncmc_enabled         = False
+
+    # 7. Order status — new card needs to be dispatched
+    card.order_status = "ORDERED"
+
+    # NOTE: balance is untouched (preserved from old card)
+    # NOTE: transactions are linked to user_id, so they remain intact
+
+    try:
+        db.session.commit()
+        return jsonify({
+            "success": True,
+            "order_status": "ORDERED",
+            "message": "Card reissue successful! Your new card is being prepared."
+        })
+    except Exception as e:
+        db.session.rollback()
+        print(f"Database Error (reissue): {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/card/confirm_receipt", methods=["POST"])
+@jwt_required()
+def confirm_receipt():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+    
+    if card.order_status != "DELIVERED":
+        return jsonify({"error": "Card is not marked as delivered"}), 400
+        
+    try:
+        card.order_status = "RECEIVED"
+        
+        db.session.commit()
+        return jsonify({"success": True, "order_status": "RECEIVED"})
+    except Exception as e:
+        db.session.rollback()
+        print(f"Database Error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+# ================= Freeze / Unfreeze Card =================
+@app.route("/card/freeze", methods=["POST"])
+@jwt_required()
+def freeze_card():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+    card.is_freezed = True
+    db.session.commit()
+    return jsonify({"success": True, "is_freezed": True})
+
+@app.route("/card/unfreeze", methods=["POST"])
+@jwt_required()
+def unfreeze_card():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+    card.is_freezed = False
+    db.session.commit()
+    return jsonify({"success": True, "is_freezed": False})
 # ================= Lock / Unlock Card =================
 @app.route("/card/lock", methods=["POST"])
 @jwt_required()
@@ -728,9 +901,21 @@ def toggle_tap_pay():
     if not card:
         return jsonify({"error": "Card not found"}), 404
 
-    card.tap_and_pay_enabled = request.json.get("enabled", False)
+    enabled = request.json.get("enabled", False)
+    limit = request.json.get("limit", card.contactless_limit or 5000)
+
+    # Tap & Pay and Contactless are the same — keep both in sync
+    card.tap_and_pay_enabled = enabled
+    card.contactless_enabled = enabled
+    card.contactless_limit = limit if enabled else 0
+
     db.session.commit()
-    return jsonify({"success": True, "tap_and_pay_enabled": card.tap_and_pay_enabled})
+    return jsonify({
+        "success": True,
+        "tap_and_pay_enabled": card.tap_and_pay_enabled,
+        "contactless_enabled": card.contactless_enabled,
+        "contactless_limit": card.contactless_limit,
+    })
 
    
 @app.route("/card/send-otp", methods=["POST"])
@@ -768,9 +953,22 @@ def card_verify_otp():
 @jwt_required()
 def block_card_route():
     user_id = int(get_jwt_identity())
+    
+    # Check PIN
+    pin = request.json.get("pin")
+    if not pin:
+        return jsonify({"success": False, "error": "PIN is required"}), 400
+
     card = LumeCard.query.filter_by(user_id=user_id).first()
     if not card:
-        return jsonify({"error": "Card not found"}), 404
+        return jsonify({"success": False, "error": "Card not found"}), 404
+
+    # Verify PIN
+    if not card.pin_hash:
+        return jsonify({"success": False, "error": "Card PIN not set"}), 400
+        
+    if not bcrypt.checkpw(pin.encode(), card.pin_hash.encode()):
+        return jsonify({"success": False, "error": "Failed to block the card, Incorrect PIN"}), 401
 
     card.card_state = "BLOCKED"
     db.session.commit()
@@ -806,25 +1004,33 @@ def update_card_controls():
         return jsonify({"error": "Card not found"}), 404
 
     data = request.json
-    
-    # Update fields if they exist in request data
-    if "pos_enabled" in data: card.pos_enabled = data["pos_enabled"]
-    if "pos_limit" in data: card.pos_limit = data["pos_limit"]
-    
-    if "online_enabled" in data: card.online_enabled = data["online_enabled"]
-    if "online_limit" in data: card.online_limit = data["online_limit"]
-    
-    if "tap_and_pay_enabled" in data: card.tap_and_pay_enabled = data["tap_and_pay_enabled"]
-    if "contactless_limit" in data: card.contactless_limit = data["contactless_limit"]
-    
-    if "tokenised_enabled" in data: card.tokenised_enabled = data["tokenised_enabled"]
-    if "tokenised_limit" in data: card.tokenised_limit = data["tokenised_limit"]
-    
-    if "atm_enabled" in data: card.atm_enabled = data["atm_enabled"]
-    if "atm_limit" in data: card.atm_limit = data["atm_limit"]
+    print(f"[update-controls] received data: {data}")
+
+    if "pos_enabled" in data:         card.pos_enabled = data["pos_enabled"]
+    if "pos_limit" in data:           card.pos_limit = data["pos_limit"]
+    if "online_enabled" in data:      card.online_enabled = data["online_enabled"]
+    if "online_limit" in data:        card.online_limit = data["online_limit"]
+    if "contactless_enabled" in data:
+        card.contactless_enabled = data["contactless_enabled"]
+        # Keep tap_and_pay_enabled in sync with contactless
+        card.tap_and_pay_enabled = data["contactless_enabled"]
+        if not data["contactless_enabled"]:
+            card.contactless_limit = 0
+    if "tap_and_pay_enabled" in data:
+        card.tap_and_pay_enabled = data["tap_and_pay_enabled"]
+        # Keep contactless_enabled in sync with tap_and_pay
+        card.contactless_enabled = data["tap_and_pay_enabled"]
+        if not data["tap_and_pay_enabled"]:
+            card.contactless_limit = 0
+
+    if "contactless_limit" in data:   card.contactless_limit = data["contactless_limit"]
+    if "tokenised_enabled" in data:   card.tokenised_enabled = data["tokenised_enabled"]
+    if "tokenised_limit" in data:     card.tokenised_limit = data["tokenised_limit"]
+    if "atm_enabled" in data:         card.atm_enabled = data["atm_enabled"]
+    if "atm_limit" in data:           card.atm_limit = data["atm_limit"]
 
     db.session.commit()
-    
+    print(f"[update-controls] contactless_enabled saved as: {card.contactless_enabled}")
     return jsonify({"success": True, "message": "Controls updated successfully"})
 
 # ================ GET TRANSACTIONS ====================

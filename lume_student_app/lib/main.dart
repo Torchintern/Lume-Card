@@ -23,6 +23,7 @@ import 'screens/transactions_screen.dart';
 import 'screens/card_center_screen.dart';
 import 'screens/card_benefits_screen.dart';
 import 'screens/card_controls_screen.dart';
+import 'screens/card_reissue_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -183,6 +184,7 @@ class LumeApp extends StatelessWidget {
             "/card-center": (context) => const CardCenterScreen(),
             "/card-benefits": (context) => const CardBenefitsScreen(),
             "/card-controls": (context) => const CardControlsScreen(),
+            "/card-reissue": (context) => const CardReissueScreen(),
           },
         );
       },

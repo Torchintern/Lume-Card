@@ -174,6 +174,8 @@ class LumeCard(db.Model):
         default="UNLOCKED"
     )
 
+    is_freezed = db.Column(db.Boolean, default=False)
+
     # Controls
     pos_enabled = db.Column(db.Boolean, default=False)
     online_enabled = db.Column(db.Boolean, default=False)
@@ -185,11 +187,11 @@ class LumeCard(db.Model):
     ncmc_enabled = db.Column(db.Boolean, default=False)
 
     # Limits
-    pos_limit = db.Column(db.Integer, default=20000)
-    online_limit = db.Column(db.Integer, default=20000)
-    contactless_limit = db.Column(db.Integer, default=5000)
-    tokenised_limit = db.Column(db.Integer, default=20000)
-    atm_limit = db.Column(db.Integer, default=10000)
+    pos_limit = db.Column(db.Integer, default=0)
+    online_limit = db.Column(db.Integer, default=0)
+    contactless_limit = db.Column(db.Integer, default=0)
+    tokenised_limit = db.Column(db.Integer, default=0)
+    atm_limit = db.Column(db.Integer, default=0)
 
     order_status = db.Column(
         db.Enum(
@@ -197,10 +199,21 @@ class LumeCard(db.Model):
             "ORDERED",
             "PRINTING",
             "DISPATCHED",
-            "DELIVERED"
+            "DELIVERED",
+            "RECEIVED"
         ),
         default="NOT_REQUESTED"
     )
+
+    delivery_address = db.Column(db.String(255), nullable=True)
+    delivery_city = db.Column(db.String(100), nullable=True)
+    delivery_state = db.Column(db.String(100), nullable=True)
+    delivery_pincode = db.Column(db.String(20), nullable=True)
+    delivery_phone = db.Column(db.String(20), nullable=True)
+
+    # Reissue metadata
+    reissue_reason = db.Column(db.String(500), nullable=True)
+    reissue_payment_success = db.Column(db.Boolean, nullable=True)
 
     issued_at = db.Column(
         db.DateTime,

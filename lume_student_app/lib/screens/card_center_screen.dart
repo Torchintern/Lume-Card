@@ -17,9 +17,11 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
   bool isPinSet = false;
   bool isLocked = false;
   bool isBlocked = false;
+  bool isFreezed = false;
   String _maskedCardNumber = "**** **** **** ****";
   bool _isLoading = true;
   String? _authToken;
+  String? _orderStatus;
 
   @override
   void initState() {
@@ -39,24 +41,31 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
       }
 
       final res = await ApiService.getCardDetails(token);
-      
+
       if (res.isNotEmpty) {
         final String fullNumber = (res["card_number"] ?? "").toString();
-        final String lockStatus = (res["card_lock"] ?? "").toString().toUpperCase();
-        final String cardState = (res["card_state"] ?? "").toString().toUpperCase();
+        final String lockStatus = (res["card_lock"] ?? "")
+            .toString()
+            .toUpperCase();
+        final String cardState = (res["card_state"] ?? "")
+            .toString()
+            .toUpperCase();
 
         setState(() {
           if (fullNumber.length >= 4) {
-            _maskedCardNumber = "**** **** **** ${fullNumber.substring(fullNumber.length - 4)}";
+            _maskedCardNumber =
+                "**** **** **** ${fullNumber.substring(fullNumber.length - 4)}";
           }
           ncmcEnabled = res["ncmc_enabled"] == true;
           tapPayEnabled = res["tap_and_pay_enabled"] == true;
           isPinSet = res["is_pin_set"] == true;
           isLocked = lockStatus == "LOCKED" || res["card_lock"] == true;
           isBlocked = lockStatus == "BLOCKED" || cardState == "BLOCKED";
+          isFreezed = res["is_freezed"] == true;
+          _orderStatus = (res["order_status"] ?? "").toString().toUpperCase();
           _isLoading = false;
         });
-        
+
         if (fullNumber.isNotEmpty) {
           await prefs.setString("card_number", fullNumber);
         }
@@ -74,14 +83,17 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
 
     if (!isPinSet) {
       // Direct Set PIN flow
-      _showPinEntrySheet(title: "Set Card PIN", subtitle: "Enter a new 4-digit PIN for your transactions");
+      _showPinEntrySheet(
+        title: "Set Card PIN",
+        subtitle: "Enter a new 4-digit PIN for your transactions",
+      );
     } else {
       // Change PIN flow - requires OTP
       _showOtpVerificationSheet();
     }
   }
 
-  void _showOtpVerificationSheet() async {
+  void _showOtpVerificationSheet({VoidCallback? onSuccess}) async {
     if (_authToken == null) return;
 
     // Send initial OTP
@@ -108,7 +120,14 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
         authToken: _authToken!,
         onVerified: () {
           Navigator.pop(context);
-          _showPinEntrySheet(title: "Change Card PIN", subtitle: "Enter your new 4-digit transaction PIN");
+          if (onSuccess != null) {
+            onSuccess();
+          } else {
+            _showPinEntrySheet(
+              title: "Change Card PIN",
+              subtitle: "Enter your new 4-digit transaction PIN",
+            );
+          }
         },
         onError: (msg) => _showErrorSnackBar(msg),
       ),
@@ -138,21 +157,50 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
             ),
             decoration: BoxDecoration(
               color: colorScheme.surface.withOpacity(0.9),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(32),
+              ),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(10))),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
                 const SizedBox(height: 24),
-                Icon(isConfirmStage ? Icons.lock_reset_rounded : Icons.lock_outline_rounded, size: 48, color: const Color(0xFF6366F1)),
+                Icon(
+                  isConfirmStage
+                      ? Icons.lock_reset_rounded
+                      : Icons.lock_outline_rounded,
+                  size: 48,
+                  color: const Color(0xFF6366F1),
+                ),
                 const SizedBox(height: 16),
-                Text(isConfirmStage ? "Confirm Your PIN" : title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                Text(
+                  isConfirmStage ? "Confirm Your PIN" : title,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
                 const SizedBox(height: 8),
-                Text(isConfirmStage ? "Re-enter the 4-digit PIN to confirm" : subtitle, textAlign: TextAlign.center, style: TextStyle(color: colorScheme.onSurfaceVariant)),
+                Text(
+                  isConfirmStage
+                      ? "Re-enter the 4-digit PIN to confirm"
+                      : subtitle,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                ),
                 const SizedBox(height: 32),
                 TextField(
-                  controller: isConfirmStage ? confirmPinController : pinController,
+                  controller: isConfirmStage
+                      ? confirmPinController
+                      : pinController,
                   keyboardType: TextInputType.number,
                   obscureText: true,
                   maxLength: 4,
@@ -162,43 +210,71 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
                     counterText: "",
                     filled: true,
                     fillColor: colorScheme.surfaceVariant.withOpacity(0.3),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
-                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, letterSpacing: 20),
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 20,
+                  ),
                 ),
                 const SizedBox(height: 32),
                 SizedBox(
                   width: double.infinity,
                   height: 56,
                   child: ElevatedButton(
-                    onPressed: isSaving ? null : () async {
-                      if (!isConfirmStage) {
-                        if (pinController.text.length != 4) return;
-                        setSheetState(() => isConfirmStage = true);
-                      } else {
-                        if (confirmPinController.text != pinController.text) {
-                          _showErrorSnackBar("PINs do not match");
-                          return;
-                        }
-                        setSheetState(() => isSaving = true);
-                        try {
-                          final res = await ApiService.setCardPin(_authToken!, pinController.text);
-                          if (res["success"] == true) {
-                            Navigator.pop(context);
-                            setState(() => isPinSet = true);
-                            _showStatusDialog("Success", "Your Card PIN has been successfully updated.", Icons.check_circle_rounded);
-                          } else {
-                            _showErrorSnackBar(res["error"]);
-                            setSheetState(() => isSaving = false);
-                          }
-                        } catch (e) {
-                          setSheetState(() => isSaving = false);
-                          _showErrorSnackBar("Failed to set PIN");
-                        }
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6366F1), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
-                    child: isSaving ? const CircularProgressIndicator(color: Colors.white) : Text(isConfirmStage ? "Finalize PIN" : "Continue", style: const TextStyle(fontWeight: FontWeight.bold)),
+                    onPressed: isSaving
+                        ? null
+                        : () async {
+                            if (!isConfirmStage) {
+                              if (pinController.text.length != 4) return;
+                              setSheetState(() => isConfirmStage = true);
+                            } else {
+                              if (confirmPinController.text !=
+                                  pinController.text) {
+                                _showErrorSnackBar("PINs do not match");
+                                return;
+                              }
+                              setSheetState(() => isSaving = true);
+                              try {
+                                final res = await ApiService.setCardPin(
+                                  _authToken!,
+                                  pinController.text,
+                                );
+                                if (res["success"] == true) {
+                                  Navigator.pop(context);
+                                  setState(() => isPinSet = true);
+                                  _showStatusDialog(
+                                    "Success",
+                                    "Your Card PIN has been successfully updated.",
+                                    Icons.check_circle_rounded,
+                                  );
+                                } else {
+                                  _showErrorSnackBar(res["error"]);
+                                  setSheetState(() => isSaving = false);
+                                }
+                              } catch (e) {
+                                setSheetState(() => isSaving = false);
+                                _showErrorSnackBar("Failed to set PIN");
+                              }
+                            }
+                          },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF6366F1),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: isSaving
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : Text(
+                            isConfirmStage ? "Finalize PIN" : "Continue",
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -213,6 +289,7 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
   void _showBlockCardSheet() {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    bool isTermsAccepted = false;
 
     showModalBottomSheet(
       context: context,
@@ -220,124 +297,263 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
       backgroundColor: Colors.transparent,
       builder: (context) => BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: colorScheme.surface.withOpacity(0.9),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(10),
+        child: StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: colorScheme.surface.withOpacity(0.9),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(32),
                 ),
               ),
-              const SizedBox(height: 32),
-              
-              // Mini Card Preview in Sheet
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                decoration: BoxDecoration(
-                  color: (isDark ? const Color(0xFF6366F1) : const Color(0xFFEEF2FF)).withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: const Color(0xFF6366F1).withOpacity(0.2)),
-                ),
-                child: Row(
-                  children: [
-                    Image.asset("assets/logos/rupay.png", height: 20),
-                    const SizedBox(width: 16),
-                    Column(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+
+                  // Mini Card Preview in Sheet
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 16,
+                    ),
+                    decoration: BoxDecoration(
+                      color:
+                          (isDark
+                                  ? const Color(0xFF6366F1)
+                                  : const Color(0xFFEEF2FF))
+                              .withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: const Color(0xFF6366F1).withOpacity(0.2),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Image.asset("assets/logos/rupay.png", height: 20),
+                        const SizedBox(width: 16),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              "Prepaid Card",
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                              ),
+                            ),
+                            Text(
+                              _maskedCardNumber,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colorScheme.onSurfaceVariant,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 32),
+                  Text(
+                    isBlocked ? "Replace Card" : "Block & Replace",
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    isBlocked
+                        ? "Your card is permanently blocked. Choose 'Replace Card' to issue a new one."
+                        : "Permanent loss or theft of card? Choose 'Block Card' to deactivate it forever.",
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF64748B),
+                      fontWeight: FontWeight.w500,
+                      height: 1.5,
+                    ),
+                  ),
+
+                  const SizedBox(height: 40),
+
+                  // "Freeze/Unfreeze Card" Button - Only show if not already blocked
+                  if (!isBlocked) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _executeToggleFreeze();
+                        },
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                            color: colorScheme.primary.withOpacity(0.3),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        ),
+                        child: Text(
+                          isFreezed ? "Unfreeze Card" : "Freeze Card",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      isFreezed
+                          ? "Your card is currently frozen."
+                          : "Temporarily freeze your card if you misplaced it.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colorScheme.onSurfaceVariant.withOpacity(0.8),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (isBlocked) ...[
+                    Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          "Prepaid Card",
-                          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                        SizedBox(
+                          height: 24,
+                          width: 24,
+                          child: Checkbox(
+                            value: isTermsAccepted,
+                            onChanged: (val) {
+                              setSheetState(() {
+                                isTermsAccepted = val ?? false;
+                              });
+                            },
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            activeColor: colorScheme.primary,
+                          ),
                         ),
-                        Text(
-                          _maskedCardNumber,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colorScheme.onSurfaceVariant,
-                            fontFamily: 'monospace',
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Wrap(
+                            children: [
+                              Text(
+                                "I agree to the ",
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: colorScheme.onSurface,
+                                ),
+                              ),
+                              GestureDetector(
+                                onTap: () {
+                                  Navigator.pushNamed(context, '/terms');
+                                },
+                                  child: Text(
+                                    "terms & conditions",
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: colorScheme.primary,
+                                      fontWeight: FontWeight.bold,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  " and ",
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: colorScheme.onSurface,
+                                  ),
+                                ),
+                                GestureDetector(
+                                  onTap: () {
+                                    Navigator.pushNamed(context, '/privacy');
+                                  },
+                                  child: Text(
+                                    "privacy policy",
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: colorScheme.primary,
+                                      fontWeight: FontWeight.bold,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ),
+                              Text(
+                                ".",
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: colorScheme.onSurface,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
+                    const SizedBox(height: 24),
                   ],
-                ),
-              ),
-              
-              const SizedBox(height: 32),
-              const Text(
-                "Block & Replace",
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                "Permanent loss or theft of card? Choose 'Block Card' to deactivate it forever.",
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Color(0xFF64748B),
-                  fontWeight: FontWeight.w500,
-                  height: 1.5,
-                ),
-              ),
-              
-              const SizedBox(height: 40),
-              
-              // "Lock for Now" Button - Only show if not already locked
-              if (!isLocked) ...[
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _showLockCardSheet();
-                    },
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: colorScheme.primary.withOpacity(0.3)),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+
+                  // "Block Card" or "Replace Card" Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: (isBlocked && !isTermsAccepted)
+                          ? null
+                          : () async {
+                              Navigator.pop(context);
+                              if (isBlocked) {
+                                await Navigator.pushNamed(context, "/card-reissue");
+                                setState(() => _isLoading = true);
+                                _fetchCardDetails();
+                              } else {
+                                _showBlockConfirmationSheet();
+                              }
+                            },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isBlocked
+                            ? colorScheme.primary
+                            : Colors.redAccent,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor:
+                            colorScheme.surfaceContainerHighest,
+                        disabledForegroundColor: colorScheme.onSurfaceVariant,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      ),
+                      child: Text(
+                        isBlocked ? "Replace Card" : "Block Card",
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
                     ),
-                    child: const Text(
-                      "Lock for Now",
-                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-              ],
-              
-              // "Block Card" Button
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _showBlockConfirmationSheet();
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.redAccent,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  ),
-                  child: const Text(
-                    "Block Card",
-                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-                  ),
-                ),
+                  const SizedBox(height: 12),
+                ],
               ),
-              const SizedBox(height: 12),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -355,11 +571,15 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
         child: Dialog(
           backgroundColor: Colors.transparent,
           elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(28),
+          ),
           child: Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF1E293B).withOpacity(0.9) : Colors.white.withOpacity(0.9),
+              color: isDark
+                  ? const Color(0xFF1E293B).withOpacity(0.9)
+                  : Colors.white.withOpacity(0.9),
               borderRadius: BorderRadius.circular(28),
               border: Border.all(color: Colors.white.withOpacity(0.2)),
               boxShadow: [
@@ -367,7 +587,7 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
                   color: Colors.black.withOpacity(0.1),
                   blurRadius: 20,
                   offset: const Offset(0, 10),
-                )
+                ),
               ],
             ),
             child: Column(
@@ -400,8 +620,13 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
                     TextButton(
                       onPressed: () => Navigator.pop(context),
                       style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                       child: Text(
                         "Cancel",
@@ -422,8 +647,13 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
                         backgroundColor: colorScheme.primary,
                         foregroundColor: Colors.white,
                         elevation: 0,
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                       child: const Text(
                         "Block Card",
@@ -460,7 +690,9 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
               padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
               decoration: BoxDecoration(
                 color: isDark ? const Color(0xFF1E293B) : Colors.white,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(32),
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.2),
@@ -522,15 +754,22 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
                     ),
                     decoration: InputDecoration(
                       hintText: "••••",
-                      hintStyle: TextStyle(color: colorScheme.onSurfaceVariant.withOpacity(0.5)),
+                      hintStyle: TextStyle(
+                        color: colorScheme.onSurfaceVariant.withOpacity(0.5),
+                      ),
                       counterText: "",
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: colorScheme.outlineVariant.withOpacity(0.5)),
+                        borderSide: BorderSide(
+                          color: colorScheme.outlineVariant.withOpacity(0.5),
+                        ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: colorScheme.primary, width: 2),
+                        borderSide: BorderSide(
+                          color: colorScheme.primary,
+                          width: 2,
+                        ),
                       ),
                       contentPadding: const EdgeInsets.symmetric(vertical: 16),
                     ),
@@ -544,7 +783,11 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
                           child: OutlinedButton(
                             onPressed: () => Navigator.pop(context),
                             style: OutlinedButton.styleFrom(
-                              side: BorderSide(color: colorScheme.outlineVariant.withOpacity(0.5)),
+                              side: BorderSide(
+                                color: colorScheme.outlineVariant.withOpacity(
+                                  0.5,
+                                ),
+                              ),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(16),
                               ),
@@ -569,20 +812,26 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
                                 ? null
                                 : () async {
                                     if (_pinController.text.length != 4) {
-                                      _showErrorSnackBar("Please enter a 4-digit PIN.");
+                                      _showErrorSnackBar(
+                                        "Please enter a 4-digit PIN.",
+                                      );
                                       return;
                                     }
                                     setState(() {
                                       _isLoading = true;
                                     });
-                                    
+
                                     // Verification logic would go here
                                     // For now, we proceed to call the blocking API
-                                    await Future.delayed(const Duration(milliseconds: 800)); 
-                                    
+                                    await Future.delayed(
+                                      const Duration(milliseconds: 800),
+                                    );
+
                                     if (mounted) {
                                       Navigator.pop(context); // Close PIN sheet
-                                      await _blockCardLogic(); // Call the actual blocking logic
+                                      await _blockCardLogic(
+                                        _pinController.text,
+                                      ); // Call the actual blocking logic
                                     }
                                   },
                             style: ElevatedButton.styleFrom(
@@ -594,7 +843,9 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
                               ),
                             ),
                             child: _isLoading
-                                ? const CircularProgressIndicator(color: Colors.white)
+                                ? const CircularProgressIndicator(
+                                    color: Colors.white,
+                                  )
                                 : const Text(
                                     "Confirm Block",
                                     style: TextStyle(
@@ -616,20 +867,64 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
     );
   }
 
-  Future<void> _blockCardLogic() async {
+  Future<void> _blockCardLogic(String pin) async {
     if (_authToken == null) return;
     try {
-      final res = await ApiService.blockCard(_authToken!);
+      final res = await ApiService.blockCard(_authToken!, pin);
       if (res["success"] == true) {
-        _showStatusDialog("Card Blocked", "Your card has been permanently blocked.", Icons.block_rounded);
+        setState(() {
+          isBlocked = true;
+        });
+        _showStatusDialog(
+          "Card Blocked",
+          "Your card has been permanently blocked.",
+          Icons.block_rounded,
+        );
       } else {
-        _showErrorSnackBar("Failed to block card");
+        _showErrorSnackBar(res["error"] ?? "Failed to block card");
       }
     } catch (e) {
       _showErrorSnackBar("Error connecting to server");
     }
   }
 
+  Future<void> _executeToggleFreeze() async {
+    if (_authToken == null) return;
+    final bool targetFreezeStatus = !isFreezed;
+
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final res = targetFreezeStatus
+          ? await ApiService.freezeCard(_authToken!)
+          : await ApiService.unfreezeCard(_authToken!);
+
+      if (mounted) Navigator.pop(context); // Close loading dialog
+
+      if (res["success"] == true) {
+        setState(() => isFreezed = targetFreezeStatus);
+        _showStatusDialog(
+          targetFreezeStatus ? "Card Frozen" : "Card Unfrozen",
+          targetFreezeStatus
+              ? "Your card has been temporarily frozen successfully."
+              : "Your card is now unfrozen and active.",
+          targetFreezeStatus
+              ? Icons.ac_unit_rounded
+              : Icons.local_fire_department_rounded,
+        );
+      } else {
+        _showErrorSnackBar("Failed to update card status");
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      _showErrorSnackBar("Connectivity error. Try again.");
+    }
+  }
 
   Future<void> _executeToggleLock() async {
     if (_authToken == null) return;
@@ -643,20 +938,20 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
     );
 
     try {
-      final res = targetLockStatus 
-        ? await ApiService.lockCard(_authToken!)
-        : await ApiService.unlockCard(_authToken!);
-        
+      final res = targetLockStatus
+          ? await ApiService.lockCard(_authToken!)
+          : await ApiService.unlockCard(_authToken!);
+
       if (mounted) Navigator.pop(context); // Close loading dialog
 
       if (res["success"] == true) {
         setState(() => isLocked = targetLockStatus);
         _showStatusDialog(
-          targetLockStatus ? "Card Locked" : "Card Unlocked", 
-          targetLockStatus 
-            ? "Your card has been temporarily locked successfully." 
-            : "Your card is now active and ready for transactions.", 
-          targetLockStatus ? Icons.lock_rounded : Icons.lock_open_rounded
+          targetLockStatus ? "Card Locked" : "Card Unlocked",
+          targetLockStatus
+              ? "Your card has been temporarily locked successfully."
+              : "Your card is now active and ready for transactions.",
+          targetLockStatus ? Icons.lock_rounded : Icons.lock_open_rounded,
         );
       } else {
         _showErrorSnackBar("Failed to update card status");
@@ -745,7 +1040,9 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
                       child: OutlinedButton(
                         onPressed: () => Navigator.pop(context),
                         style: OutlinedButton.styleFrom(
-                          side: BorderSide(color: colorScheme.outlineVariant.withOpacity(0.5)),
+                          side: BorderSide(
+                            color: colorScheme.outlineVariant.withOpacity(0.5),
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
@@ -803,7 +1100,13 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
     try {
       final res = await ApiService.toggleNcmc(_authToken!, enabled);
       if (res["success"] == true) {
-        _showStatusDialog(enabled ? "NCMC Enabled" : "NCMC Disabled", enabled ? "You can now use your card for transit payments." : "Transit payments have been disabled for this card.", Icons.directions_bus_rounded);
+        _showStatusDialog(
+          enabled ? "NCMC Enabled" : "NCMC Disabled",
+          enabled
+              ? "You can now use your card for transit payments."
+              : "Transit payments have been disabled for this card.",
+          Icons.directions_bus_rounded,
+        );
       } else {
         setState(() => ncmcEnabled = !enabled);
         _showErrorSnackBar("Failed to update NCMC setting");
@@ -816,29 +1119,267 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
 
   Future<void> _toggleTapPay(bool enabled) async {
     if (_authToken == null) return;
-    setState(() => tapPayEnabled = enabled);
-    try {
-      final res = await ApiService.toggleTapPay(_authToken!, enabled);
-      if (res["success"] == true) {
-        _showStatusDialog(enabled ? "Tap & Pay Enabled" : "Tap & Pay Disabled", enabled ? "You can now make contactless payments at NFC terminals." : "Contactless payments have been disabled for this card.", Icons.nfc_rounded);
-      } else {
-        setState(() => tapPayEnabled = !enabled);
-        _showErrorSnackBar("Failed to update Tap & Pay setting");
+
+    if (enabled) {
+      // Show limit picker before enabling
+      _showTapPayLimitSheet();
+    } else {
+      // Disable instantly — no limit needed
+      setState(() => tapPayEnabled = false);
+      try {
+        final res = await ApiService.toggleTapPay(_authToken!, false, limit: 0);
+        if (res["success"] == true) {
+          _showStatusDialog(
+            "Tap & Pay Disabled",
+            "Contactless payments have been disabled for this card.",
+            Icons.nfc_rounded,
+          );
+        } else {
+          setState(() => tapPayEnabled = true);
+          _showErrorSnackBar("Failed to disable Tap & Pay");
+        }
+      } catch (e) {
+        setState(() => tapPayEnabled = true);
+        _showErrorSnackBar("Error: Could not connect to server");
       }
-    } catch (e) {
-      setState(() => tapPayEnabled = !enabled);
-      _showErrorSnackBar("Error: Could not connect to server");
     }
+  }
+
+  void _showTapPayLimitSheet() {
+    final colorScheme = Theme.of(context).colorScheme;
+    double currentLimit = 5000;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+          child: StatefulBuilder(
+            builder: (context, setSheetState) {
+              return Container(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+                  top: 24,
+                  left: 24,
+                  right: 24,
+                ),
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.nfc_rounded, color: colorScheme.primary, size: 36),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      "Enable Tap & Pay",
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Set a contactless spending limit per transaction",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: colorScheme.onSurface.withOpacity(0.6),
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withOpacity(0.06),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        "₹ ${currentLimit.toInt().toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')}",
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w900,
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    SliderTheme(
+                      data: SliderThemeData(
+                        activeTrackColor: colorScheme.primary,
+                        inactiveTrackColor: colorScheme.primary.withOpacity(0.15),
+                        thumbColor: colorScheme.primary,
+                        overlayColor: colorScheme.primary.withOpacity(0.2),
+                        trackHeight: 6,
+                      ),
+                      child: Slider(
+                        value: currentLimit,
+                        min: 500,
+                        max: 25000,
+                        divisions: 49,
+                        onChanged: (v) => setSheetState(() => currentLimit = v),
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: ElevatedButton(
+                        onPressed: currentLimit > 0 ? () async {
+                          Navigator.pop(ctx);
+                          setState(() => tapPayEnabled = true);
+                          try {
+                            final res = await ApiService.toggleTapPay(
+                              _authToken!, true,
+                              limit: currentLimit.toInt(),
+                            );
+                            if (res["success"] == true) {
+                              _showStatusDialog(
+                                "Tap & Pay Enabled",
+                                "You can now make contactless payments up to ₹${currentLimit.toInt()} per transaction.",
+                                Icons.nfc_rounded,
+                              );
+                            } else {
+                              setState(() => tapPayEnabled = false);
+                              _showErrorSnackBar("Failed to enable Tap & Pay");
+                            }
+                          } catch (e) {
+                            setState(() => tapPayEnabled = false);
+                            _showErrorSnackBar("Error: Could not connect to server");
+                          }
+                        } : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: colorScheme.primary,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          elevation: 0,
+                        ),
+                        child: const Text(
+                          "Enable & Save",
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
   }
 
   void _showStatusDialog(String title, String message, IconData icon) {
     final colorScheme = Theme.of(context).colorScheme;
-    showDialog(context: context, builder: (context) => BackdropFilter(filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8), child: Dialog(backgroundColor: Colors.transparent, insetPadding: const EdgeInsets.symmetric(horizontal: 40), child: Container(padding: const EdgeInsets.all(28), decoration: BoxDecoration(color: colorScheme.surface.withOpacity(0.85), borderRadius: BorderRadius.circular(32), border: Border.all(color: Colors.white.withOpacity(0.2)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, 10))]), child: Column(mainAxisSize: MainAxisSize.min, children: [Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: colorScheme.primary.withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, color: colorScheme.primary, size: 32)), const SizedBox(height: 24), Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.5)), const SizedBox(height: 12), Text(message, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: colorScheme.onSurfaceVariant, height: 1.5)), const SizedBox(height: 32), SizedBox(width: double.infinity, height: 52, child: ElevatedButton(onPressed: () => Navigator.pop(context), style: ElevatedButton.styleFrom(backgroundColor: colorScheme.primary, foregroundColor: Colors.white, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: const Text("Great!", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)))), ], ), ), )));
+    showDialog(
+      context: context,
+      builder: (context) => BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+        child: Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: colorScheme.surface.withOpacity(0.85),
+              borderRadius: BorderRadius.circular(32),
+              border: Border.all(color: Colors.white.withOpacity(0.2)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primary.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(icon, color: colorScheme.primary, size: 32),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: colorScheme.onSurfaceVariant,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: colorScheme.primary,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: const Text(
+                      "Great!",
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _showErrorSnackBar(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: Colors.redAccent, behavior: SnackBarBehavior.floating));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override
@@ -849,199 +1390,266 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
     return Scaffold(
       backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        title: const Text("Card Center", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 20)),
+        title: const Text(
+          "Card Center",
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 20),
+        ),
         centerTitle: true,
         backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
       ),
-      body: _isLoading 
-        ? const Center(child: CircularProgressIndicator())
-        : SingleChildScrollView(
-            physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Premium Card Preview
-                Stack(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(24),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: isDark 
-                            ? [const Color(0xFF1E293B), const Color(0xFF0F172A)]
-                            : [const Color(0xFFF1F5F9), Colors.white],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Premium Card Preview
+                  Stack(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: isDark
+                                ? [
+                                    const Color(0xFF1E293B),
+                                    const Color(0xFF0F172A),
+                                  ]
+                                : [const Color(0xFFF1F5F9), Colors.white],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(28),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(
+                                isDark ? 0.3 : 0.05,
+                              ),
+                              blurRadius: 20,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                          border: Border.all(
+                            color: colorScheme.outlineVariant.withOpacity(0.5),
+                          ),
                         ),
-                        borderRadius: BorderRadius.circular(28),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
-                            blurRadius: 20,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                        border: Border.all(
-                          color: colorScheme.outlineVariant.withOpacity(0.5),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Image.asset(
-                              "assets/logos/rupay.png",
-                              height: 24,
-                            ),
-                          ),
-                          const SizedBox(width: 20),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  "Lume Prepaid Card",
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w800,
-                                    color: colorScheme.onSurface,
-                                    letterSpacing: -0.5,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  _maskedCardNumber,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: colorScheme.onSurfaceVariant,
-                                    fontFamily: 'monospace',
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (isLocked || isBlocked)
-                      Positioned.fill(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.6),
-                            borderRadius: BorderRadius.circular(28),
-                          ),
-                          child: Center(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: Colors.redAccent.withOpacity(0.8),
+                                color: Colors.white,
                                 borderRadius: BorderRadius.circular(12),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
+                              child: Image.asset(
+                                "assets/logos/rupay.png",
+                                height: 24,
+                              ),
+                            ),
+                            const SizedBox(width: 20),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Icon(isBlocked ? Icons.block_rounded : Icons.lock_rounded, color: Colors.white, size: 16),
-                                  const SizedBox(width: 6),
                                   Text(
-                                    isBlocked ? "BLOCKED" : "LOCKED",
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: 12,
+                                    "Lume Prepaid Card",
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                      color: colorScheme.onSurface,
+                                      letterSpacing: -0.5,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _maskedCardNumber,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: colorScheme.onSurfaceVariant,
+                                      fontFamily: 'monospace',
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                          ),
+                          ],
                         ),
                       ),
-                  ],
-                ),
+                      if (isLocked || isBlocked || isFreezed)
+                        Positioned.fill(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.6),
+                              borderRadius: BorderRadius.circular(28),
+                            ),
+                            child: Center(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isBlocked || isLocked
+                                      ? Colors.redAccent.withOpacity(0.8)
+                                      : Colors.blueAccent.withOpacity(0.8),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      isBlocked
+                                          ? Icons.block_rounded
+                                          : isFreezed
+                                          ? Icons.ac_unit_rounded
+                                          : Icons.lock_rounded,
+                                      color: Colors.white,
+                                      size: 16,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      isBlocked
+                                          ? "BLOCKED"
+                                          : isFreezed
+                                          ? "FROZEN"
+                                          : "LOCKED",
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
 
-                const SizedBox(height: 32),
+                  const SizedBox(height: 32),
 
-                _buildSectionHeader("QUICK CONTROLS"),
-                _tileSwitch(
-                  Icons.directions_bus_rounded,
-                  "NCMC (Transit)",
-                  "Enable for metro/bus payments",
-                  ncmcEnabled,
-                  (v) => _toggleNcmc(v),
-                  colorScheme,
-                ),
-                _tileSwitch(
-                  Icons.nfc_rounded,
-                  "Tap & Pay (NFC)",
-                  "Pay at offline stores instantly",
-                  tapPayEnabled,
-                  (v) => _toggleTapPay(v),
-                  colorScheme,
-                ),
+                  _buildSectionHeader("QUICK CONTROLS"),
+                  _tileSwitch(
+                    Icons.directions_bus_rounded,
+                    "NCMC (Transit)",
+                    "Enable for metro/bus payments",
+                    ncmcEnabled,
+                    (v) => _toggleNcmc(v),
+                    colorScheme,
+                  ),
+                  _tileSwitch(
+                    Icons.nfc_rounded,
+                    "Tap & Pay (NFC)",
+                    "Pay at offline stores instantly",
+                    tapPayEnabled,
+                    (v) => _toggleTapPay(v),
+                    colorScheme,
+                  ),
 
-                const SizedBox(height: 24),
-                _buildSectionHeader("SECURITY & SETTINGS"),
-                _buildActionTile(
-                  Icons.pin_rounded,
-                  isPinSet ? "Card PIN" : "Set Card PIN",
-                  isPinSet ? "Change your ATM/POS PIN" : "Setup your card PIN securely",
-                  colorScheme,
-                  onTap: _handlePinAction,
-                ),
-                _buildActionTile(
-                  isLocked ? Icons.lock_open_rounded : Icons.lock_rounded,
-                  isLocked ? "Unlock this Card" : "Lock this Card",
-                  isLocked ? "Tap to reactivate your card" : "Temporarily freeze your card",
-                  colorScheme,
-                  textColor: isLocked ? colorScheme.primary : null,
-                  onTap: _showLockCardSheet,
-                ),
-                _buildActionTile(
-                  Icons.block_rounded,
-                  "Block & Replace",
-                  "Permanent loss or theft",
-                  colorScheme,
-                  textColor: Colors.redAccent,
-                  onTap: _showBlockCardSheet,
-                ),
+                  const SizedBox(height: 24),
+                  _buildSectionHeader("SECURITY & SETTINGS"),
+                  _buildActionTile(
+                    Icons.pin_rounded,
+                    isPinSet ? "Card PIN" : "Set Card PIN",
+                    isPinSet
+                        ? "Change your ATM/POS PIN"
+                        : "Setup your card PIN securely",
+                    colorScheme,
+                    onTap: _handlePinAction,
+                    isEnabled: true,
+                  ),
+                  _buildActionTile(
+                    isLocked ? Icons.lock_open_rounded : Icons.lock_rounded,
+                    isLocked ? "Unlock this Card" : "Lock this Card",
+                    isLocked
+                        ? "Tap to reactivate your card"
+                        : "Temporarily freeze your card",
+                    colorScheme,
+                    textColor: isLocked ? colorScheme.primary : null,
+                    onTap: _showLockCardSheet,
+                    isEnabled: true,
+                  ),
+                  _buildActionTile(
+                    Icons.block_rounded,
+                    isBlocked ? "Replace" : "Block & Replace",
+                    "Permanent loss or theft",
+                    colorScheme,
+                    textColor: Colors.redAccent,
+                    onTap: () async {
+                      if (_orderStatus == "RECEIVED") {
+                        if (isBlocked) {
+                          // Take OTP verification first
+                          _showOtpVerificationSheet(
+                            onSuccess: () async {
+                              // Once verified, open reissue screen
+                              await Navigator.pushNamed(
+                                context,
+                                "/card-reissue",
+                              );
+                              if (mounted) {
+                                setState(() => _isLoading = true);
+                                _fetchCardDetails();
+                              }
+                            },
+                          );
+                        } else {
+                          // Need to block first, then user can reissue
+                          _showBlockCardSheet();
+                        }
+                      } else {
+                        _showErrorSnackBar(
+                          "Physical card must be delivered to block/replace.",
+                        );
+                      }
+                    },
+                    isEnabled: _orderStatus == "RECEIVED",
+                  ),
+                  _buildActionTile(
+                    Icons.tune_rounded,
+                    "Controls & Limits",
+                    "Manage spending thresholds",
+                    colorScheme,
+                    onTap: () async {
+                      // Navigator.pushNamed returns a Future
+                      await Navigator.pushNamed(context, "/card-controls");
+                      // When returning, refresh the details to sync changes like Tap & Pay
+                      if (mounted) {
+                        setState(() => _isLoading = true);
+                        _fetchCardDetails();
+                      }
+                    },
+                    isEnabled: true,
+                  ),
 
-                const SizedBox(height: 24),
-                _buildSectionHeader("MORE INFORMATION"),
-                _buildActionTile(
-                  Icons.tune_rounded,
-                  "Controls & Limits",
-                  "Manage spending thresholds",
-                  colorScheme,
-                  onTap: () => Navigator.pushNamed(context, "/card-controls"),
-                ),
-                _buildActionTile(
-                  Icons.card_giftcard_rounded,
-                  "Card Benefits",
-                  "View lounge and offer access",
-                  colorScheme,
-                  onTap: () => Navigator.pushNamed(context, "/card-benefits"),
-                  isEnabled: true,
-                ),
-                _buildActionTile(
-                  Icons.help_outline_rounded,
-                  "Support",
-                  "Need help with your card?",
-                  colorScheme,
-                  onTap: () => Navigator.pushNamed(context, "/help-support"),
-                  isEnabled: true, // Always allowed even if blocked
-                ),
-                const SizedBox(height: 40),
-              ],
+                  const SizedBox(height: 24),
+                  _buildSectionHeader("MORE INFORMATION"),
+                  _buildActionTile(
+                    Icons.card_giftcard_rounded,
+                    "Card Benefits",
+                    "View lounge and offer access",
+                    colorScheme,
+                    onTap: () => Navigator.pushNamed(context, "/card-benefits"),
+                    isEnabled: true,
+                  ),
+                  _buildActionTile(
+                    Icons.help_outline_rounded,
+                    "Support",
+                    "Need help with your card?",
+                    colorScheme,
+                    onTap: () => Navigator.pushNamed(context, "/help-support"),
+                    isEnabled: true, // Always allowed even if blocked
+                  ),
+                  const SizedBox(height: 40),
+                ],
+              ),
             ),
-          ),
     );
   }
 
@@ -1060,8 +1668,17 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
     );
   }
 
-  Widget _buildActionTile(IconData icon, String title, String subtitle, ColorScheme colorScheme, {VoidCallback? onTap, Color? textColor, bool isEnabled = false}) {
-    final bool effectiveEnabled = isEnabled || !isBlocked; // Support tile is always enabled, others are disabled if blocked
+  Widget _buildActionTile(
+    IconData icon,
+    String title,
+    String subtitle,
+    ColorScheme colorScheme, {
+    VoidCallback? onTap,
+    Color? textColor,
+    bool isEnabled = false,
+  }) {
+    // Support and Replace tiles are always enabled even if blocked
+    final bool effectiveEnabled = isEnabled && (!isBlocked || title == "Support" || title.contains("Replace"));
 
     return Opacity(
       opacity: effectiveEnabled ? 1.0 : 0.5,
@@ -1070,18 +1687,27 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
         decoration: BoxDecoration(
           color: colorScheme.surface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.3)),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withOpacity(0.3),
+          ),
         ),
         child: ListTile(
           onTap: effectiveEnabled ? onTap : null,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 4,
+          ),
           leading: Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: (textColor ?? colorScheme.primary).withOpacity(0.1),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: Icon(icon, color: textColor ?? colorScheme.primary, size: 22),
+            child: Icon(
+              icon,
+              color: textColor ?? colorScheme.primary,
+              size: 22,
+            ),
           ),
           title: Text(
             title,
@@ -1098,7 +1724,11 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
               color: colorScheme.onSurfaceVariant.withOpacity(0.7),
             ),
           ),
-          trailing: Icon(Icons.chevron_right_rounded, size: 20, color: Colors.grey.shade400),
+          trailing: Icon(
+            Icons.chevron_right_rounded,
+            size: 20,
+            color: Colors.grey.shade400,
+          ),
         ),
       ),
     );
@@ -1119,10 +1749,15 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
         decoration: BoxDecoration(
           color: colorScheme.surface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.3)),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withOpacity(0.3),
+          ),
         ),
         child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 4,
+          ),
           leading: Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
@@ -1155,7 +1790,8 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
       ),
     );
   }
-}
+
+  }
 
 class _OtpVerificationSheet extends StatefulWidget {
   final String authToken;
@@ -1240,13 +1876,31 @@ class _OtpVerificationSheetState extends State<_OtpVerificationSheet> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(10))),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
             const SizedBox(height: 24),
-            const Icon(Icons.security_rounded, size: 48, color: Color(0xFF6366F1)),
+            const Icon(
+              Icons.security_rounded,
+              size: 48,
+              color: Color(0xFF6366F1),
+            ),
             const SizedBox(height: 16),
-            const Text("Security Verification", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+            const Text(
+              "Security Verification",
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 8),
-            Text("Enter the OTP sent to your registered mobile number", textAlign: TextAlign.center, style: TextStyle(color: colorScheme.onSurfaceVariant)),
+            Text(
+              "Enter the OTP sent to your registered mobile number",
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
             const SizedBox(height: 32),
             TextField(
               controller: otpController,
@@ -1258,36 +1912,55 @@ class _OtpVerificationSheetState extends State<_OtpVerificationSheet> {
                 counterText: "",
                 filled: true,
                 fillColor: colorScheme.surfaceVariant.withOpacity(0.3),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
               ),
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 8),
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 8,
+              ),
             ),
             const SizedBox(height: 32),
             SizedBox(
               width: double.infinity,
               height: 56,
               child: ElevatedButton(
-                onPressed: isVerifying ? null : () async {
-                  setState(() => isVerifying = true);
-                  try {
-                    final res = await ApiService.cardVerifyOtp(widget.authToken, otpController.text);
-                    if (res["success"] == true) {
-                      widget.onVerified();
-                    } else {
-                      widget.onError(res["error"] ?? "Invalid OTP");
-                      setState(() => isVerifying = false);
-                    }
-                  } catch (e) {
-                    setState(() => isVerifying = false);
-                    widget.onError("Verification failed");
-                  }
-                },
+                onPressed: isVerifying
+                    ? null
+                    : () async {
+                        setState(() => isVerifying = true);
+                        try {
+                          final res = await ApiService.cardVerifyOtp(
+                            widget.authToken,
+                            otpController.text,
+                          );
+                          if (res["success"] == true) {
+                            widget.onVerified();
+                          } else {
+                            widget.onError(res["error"] ?? "Invalid OTP");
+                            setState(() => isVerifying = false);
+                          }
+                        } catch (e) {
+                          setState(() => isVerifying = false);
+                          widget.onError("Verification failed");
+                        }
+                      },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6366F1), 
-                  foregroundColor: Colors.white, 
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))
+                  backgroundColor: const Color(0xFF6366F1),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
-                child: isVerifying ? const CircularProgressIndicator(color: Colors.white) : const Text("Verify OTP", style: TextStyle(fontWeight: FontWeight.bold)),
+                child: isVerifying
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : const Text(
+                        "Verify OTP",
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
               ),
             ),
             const SizedBox(height: 16),
@@ -1296,7 +1969,9 @@ class _OtpVerificationSheetState extends State<_OtpVerificationSheet> {
               child: Text(
                 timerSeconds == 0 ? "Resend OTP" : "Resend in ${timerSeconds}s",
                 style: TextStyle(
-                  color: timerSeconds == 0 ? const Color(0xFF6366F1) : Colors.grey,
+                  color: timerSeconds == 0
+                      ? const Color(0xFF6366F1)
+                      : Colors.grey,
                   fontWeight: FontWeight.bold,
                 ),
               ),

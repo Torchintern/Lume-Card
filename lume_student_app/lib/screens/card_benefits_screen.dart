@@ -155,6 +155,22 @@ class _CardBenefitsScreenState extends State<CardBenefitsScreen> with SingleTick
     );
   }
 
+  Widget _buildSimpleDivider() {
+    return Container(
+      height: 1.5,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF7C3AED).withOpacity(0.4), // Metallic Purple
+            const Color(0xFF7C3AED).withOpacity(0.1),
+            Colors.transparent,
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCardFront(BuildContext context, ColorScheme colorScheme) {
     return Container(
       width: 260,
@@ -384,7 +400,15 @@ class _CardBenefitsScreenState extends State<CardBenefitsScreen> with SingleTick
               Container(
                 width: 10,
                 decoration: const BoxDecoration(
-                  color: Color(0xFFE8820C),
+                  gradient: LinearGradient(
+                    colors: [
+                      Color(0xFF6D28D9), // Deep Purple
+                      Color(0xFF9333EA), // Bright Purple
+                      Color(0xFF7C3AED), // Medium Purple
+                    ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
                   borderRadius: BorderRadius.only(
                     topLeft: Radius.circular(24),
                     bottomLeft: Radius.circular(24),
@@ -419,7 +443,7 @@ class _CardBenefitsScreenState extends State<CardBenefitsScreen> with SingleTick
                         ],
                       ),
                       const SizedBox(height: 8),
-                      Container(height: 1, color: const Color(0xFFE5E7EB)),
+                      _buildSimpleDivider(),
                       const SizedBox(height: 8),
                       Text(
                         _userName.toUpperCase(),

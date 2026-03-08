@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -35,15 +37,16 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> with TickerProviderStateMixin {
+class _DashboardScreenState extends State<DashboardScreen>
+    with TickerProviderStateMixin {
   late AnimationController _animationController;
   late AnimationController _flipController;
   late Animation<double> _flipAnimation;
   late TabController _tabController;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  
+
   bool _isCardFlipped = false;
-  String _userName = "John Doe"; 
+  String _userName = "John Doe";
   String _userPhone = "";
   String _userEmail = "";
   String _userRegNo = "";
@@ -62,17 +65,21 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   String? _kycRemarks;
   int? _studentId;
   String? _authToken;
-  
+
   // Card sensitive details
   String? _cardNumber;
   String? _cardCvv;
   String? _cardExpiry;
   bool _isCardLocked = false;
   bool _isCardBlocked = false;
-  
+  bool _isCardFreezed = false;
+  String _orderStatus = "NOT_REQUESTED";
+  double _cardBalance = 0.0;
+  bool _isBalanceVisible = false;
+
   // Transactions
   List<dynamic> _recentTransactions = [];
-  
+
   // Weather & Greeting State
   String _weatherTemp = "--°C";
   String _weatherDesc = "Fetching...";
@@ -129,7 +136,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     // _tabController.addListener(() {
     //   if (mounted) setState(() {});
     // });
-    
+
     _flipController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -139,10 +146,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
 
     _animationController.forward();
-    _loadUserProfile(); 
+    _loadUserProfile();
     _fetchWeather();
     _startClock();
-    CampusAppPicker.preload();   
+    CampusAppPicker.preload();
   }
 
   void _startClock() {
@@ -174,17 +181,19 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             _userInstitute = student["institute_name"] ?? "";
             _userDob = student["dob"] ?? "";
             _userBloodGroup = student["blood_group"] ?? "";
-            _lumeStatus = (student["lume_status"] ?? "inactive").toString().toLowerCase();
+            _lumeStatus = (student["lume_status"] ?? "inactive")
+                .toString()
+                .toLowerCase();
             _kycStatus = (student["kyc_status"] ?? "Pending").toString();
             _kycRemarks = student["kyc_remarks"] ?? student["remarks"];
             _studentId = student["id"];
-            
+
             // Extract slot info if available
             if (student["kyc_slot"] != null) {
               _kycSlotDate = student["kyc_slot"]["date"];
               _kycSlotTime = student["kyc_slot"]["time"];
             } else if (student["slot_date"] != null) {
-              _kycSlotDate = student["slot_date"]; 
+              _kycSlotDate = student["slot_date"];
               _kycSlotTime = student["slot_time"];
             } else if (student["kyc_date"] != null) {
               _kycSlotDate = student["kyc_date"];
@@ -207,40 +216,54 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             }
           });
 
-        if (_studentId != null && (_kycStatus.toLowerCase() == "rejected" || _kycStatus.toLowerCase() == "booked" || _kycStatus.toLowerCase() == "under process")) {
+          if (_studentId != null &&
+              (_kycStatus.toLowerCase() == "rejected" ||
+                  _kycStatus.toLowerCase() == "booked" ||
+                  _kycStatus.toLowerCase() == "under process")) {
+            try {
+              final kycRes = await ApiService.getKycStatus(_studentId!);
+              if (kycRes != null && kycRes is Map) {
+                setState(() {
+                  _kycRemarks = kycRes["remarks"];
+                  if (kycRes["slot_date"] != null)
+                    _kycSlotDate = kycRes["slot_date"];
+                  if (kycRes["slot_time"] != null)
+                    _kycSlotTime = kycRes["slot_time"];
+                  if (kycRes["date"] != null) _kycSlotDate = kycRes["date"];
+                  if (kycRes["time"] != null) _kycSlotTime = kycRes["time"];
+                });
+              }
+            } catch (e) {
+              debugPrint("Error loading KYC status: $e");
+            }
+          }
+
+          // Fetch card details for lock status
           try {
-            final kycRes = await ApiService.getKycStatus(_studentId!);
-            if (kycRes != null && kycRes is Map) {
+            final cardRes = await ApiService.getCardDetails(token);
+            if (cardRes.isNotEmpty) {
+              final String lockStatus = (cardRes["card_lock"] ?? "")
+                  .toString()
+                  .toUpperCase();
+              final String cardState = (cardRes["card_state"] ?? "")
+                  .toString()
+                  .toUpperCase();
+
               setState(() {
-                _kycRemarks = kycRes["remarks"];
-                if (kycRes["slot_date"] != null) _kycSlotDate = kycRes["slot_date"];
-                if (kycRes["slot_time"] != null) _kycSlotTime = kycRes["slot_time"];
-                if (kycRes["date"] != null) _kycSlotDate = kycRes["date"];
-                if (kycRes["time"] != null) _kycSlotTime = kycRes["time"];
+                _isCardLocked =
+                    lockStatus == "LOCKED" || cardRes["card_lock"] == true;
+                _isCardBlocked =
+                    lockStatus == "BLOCKED" || cardState == "BLOCKED";
+                _isCardFreezed = cardRes["is_freezed"] == true;
+                _orderStatus = cardRes["order_status"] ?? "NOT_REQUESTED";
+                _cardBalance = (cardRes["balance"] ?? 0.0).toDouble();
               });
             }
           } catch (e) {
-            debugPrint("Error loading KYC status: $e");
+            debugPrint("Error syncing card lock status: $e");
           }
-        }
 
-        // Fetch card details for lock status
-        try {
-          final cardRes = await ApiService.getCardDetails(token);
-          if (cardRes.isNotEmpty) {
-            final String lockStatus = (cardRes["card_lock"] ?? "").toString().toUpperCase();
-            final String cardState = (cardRes["card_state"] ?? "").toString().toUpperCase();
-            
-            setState(() {
-              _isCardLocked = lockStatus == "LOCKED" || cardRes["card_lock"] == true;
-              _isCardBlocked = lockStatus == "BLOCKED" || cardState == "BLOCKED";
-            });
-          }
-        } catch (e) {
-          debugPrint("Error syncing card lock status: $e");
-        }
-
-        // Save AFTER setState
+          // Save AFTER setState
           if (serverImage != null && serverImage.isNotEmpty) {
             await prefs.setString("user_profile_image", serverImage);
           } else {
@@ -256,11 +279,14 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           await prefs.setString("user_blood_group", _userBloodGroup);
           await prefs.setString("user_batch", _userBatch);
           await prefs.setString("lume_status", _lumeStatus);
-          if (_kycSlotDate != null) await prefs.setString("kyc_slot_date", _kycSlotDate!);
-          if (_kycSlotTime != null) await prefs.setString("kyc_slot_time", _kycSlotTime!);
+          if (_kycSlotDate != null)
+            await prefs.setString("kyc_slot_date", _kycSlotDate!);
+          if (_kycSlotTime != null)
+            await prefs.setString("kyc_slot_time", _kycSlotTime!);
           if (_studentId != null) await prefs.setInt("student_id", _studentId!);
-          if (_profileImageUrl != null) await prefs.setString("user_profile_image", _profileImageUrl!);
-          
+          if (_profileImageUrl != null)
+            await prefs.setString("user_profile_image", _profileImageUrl!);
+
           final txs = await ApiService.getTransactions(token);
           if (mounted) {
             _recentTransactions = txs;
@@ -278,11 +304,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
     try {
       final now = DateTime.now();
-      
+
       // Parse Date (YYYY-MM-DD)
       List<String> dateParts = _kycSlotDate!.split('-');
       if (dateParts.length != 3) return false;
-      
+
       int year, month, day;
       if (dateParts[0].length == 4) {
         year = int.parse(dateParts[0]);
@@ -306,7 +332,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         if (timeParts.length < 2) return false;
         hour = int.parse(timeParts[0]);
         minute = int.parse(timeParts[1]);
-        
+
         if (isPm && hour != 12) hour += 12;
         if (!isPm && hour == 12) hour = 0;
       } else {
@@ -360,7 +386,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             Text(
               "Profile Photo",
               style: TextStyle(
-                fontSize: 16, 
+                fontSize: 16,
                 fontWeight: FontWeight.w600,
                 color: colorScheme.onSurface,
               ),
@@ -368,7 +394,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             const SizedBox(height: 10),
             ListTile(
               leading: Icon(Icons.camera_alt, color: colorScheme.primary),
-              title: Text("Take Photo", style: TextStyle(color: colorScheme.onSurface)),
+              title: Text(
+                "Take Photo",
+                style: TextStyle(color: colorScheme.onSurface),
+              ),
               onTap: () {
                 Navigator.pop(context);
                 _handleImage(ImageSource.camera);
@@ -376,7 +405,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             ),
             ListTile(
               leading: Icon(Icons.photo_library, color: colorScheme.primary),
-              title: Text("Upload from Gallery", style: TextStyle(color: colorScheme.onSurface)),
+              title: Text(
+                "Upload from Gallery",
+                style: TextStyle(color: colorScheme.onSurface),
+              ),
               onTap: () {
                 Navigator.pop(context);
                 _handleImage(ImageSource.gallery);
@@ -384,7 +416,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             ),
             ListTile(
               leading: const Icon(Icons.delete, color: Colors.redAccent),
-              title: const Text("Remove Photo", style: TextStyle(color: Colors.redAccent)),
+              title: const Text(
+                "Remove Photo",
+                style: TextStyle(color: Colors.redAccent),
+              ),
               onTap: () {
                 Navigator.pop(context);
                 _removeProfilePhoto();
@@ -397,82 +432,81 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
-Future<void> _handleImage(ImageSource source) async {
-  final colorScheme = Theme.of(context).colorScheme;
-  final picker = ImagePicker();
-  final picked = await picker.pickImage(source: source, imageQuality: 75);
+  Future<void> _handleImage(ImageSource source) async {
+    final colorScheme = Theme.of(context).colorScheme;
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: source, imageQuality: 75);
 
-  if (picked == null) return;
+    if (picked == null) return;
 
-  setState(() => _isUploading = true);
+    setState(() => _isUploading = true);
 
-  try {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString("auth_token");
+
+      if (token == null) return;
+
+      final res = await ApiService.uploadProfileImage(token, picked.path);
+
+      if (res["profile_image"] != null) {
+        final filename = res["profile_image"];
+
+        setState(() {
+          _profileImageUrl = filename;
+        });
+
+        await prefs.setString("user_profile_image", filename);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Upload failed: $e"),
+          backgroundColor: colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+
+    setState(() => _isUploading = false);
+  }
+
+  Future<void> _removeProfilePhoto() async {
+    final colorScheme = Theme.of(context).colorScheme;
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString("auth_token");
 
     if (token == null) return;
 
-    final res = await ApiService.uploadProfileImage(token, picked.path);
-
-    if (res["profile_image"] != null) {
-      final filename = res["profile_image"];
+    try {
+      await ApiService.removeProfileImage(token);
 
       setState(() {
-        _profileImageUrl = filename;
+        _profileImageUrl = null;
       });
 
-      await prefs.setString("user_profile_image", filename);
+      await prefs.remove("user_profile_image");
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text("Failed to remove image"),
+          backgroundColor: colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
-  } catch (e) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text("Upload failed: $e"),
-        backgroundColor: colorScheme.error,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
-
-  setState(() => _isUploading = false);
-}
-
-Future<void> _removeProfilePhoto() async {
-  final colorScheme = Theme.of(context).colorScheme;
-  final prefs = await SharedPreferences.getInstance();
-  final token = prefs.getString("auth_token");
-
-  if (token == null) return;
-
-  try {
-    await ApiService.removeProfileImage(token);
-
-    setState(() {
-      _profileImageUrl = null;
-    });
-
-    await prefs.remove("user_profile_image");
-
-  } catch (e) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text("Failed to remove image"),
-        backgroundColor: colorScheme.error,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-}
 
   String _getInitials(String name) {
     List<String> names = name.split(" ");
     String initials = "";
     int numWords = names.length > 2 ? 2 : names.length;
     for (var i = 0; i < numWords; i++) {
-        if (names[i].isNotEmpty) {
-            initials += names[i][0].toUpperCase();
-        }
+      if (names[i].isNotEmpty) {
+        initials += names[i][0].toUpperCase();
+      }
     }
     return initials.isEmpty ? "LU" : initials;
   }
@@ -487,11 +521,13 @@ Future<void> _removeProfilePhoto() async {
     } else {
       baseGreeting = "Good Evening";
     }
-    
+
     // Additional weather-based messages
     if (_currentCondition == WeatherCondition.rainy) {
       return "Stay dry today";
-    } else if (_currentCondition == WeatherCondition.sunny && hour >= 12 && hour < 17) {
+    } else if (_currentCondition == WeatherCondition.sunny &&
+        hour >= 12 &&
+        hour < 17) {
       return "Enjoy the sun";
     }
 
@@ -505,22 +541,22 @@ Future<void> _removeProfilePhoto() async {
   // Real weather fetch from Open-Meteo
   Future<void> _fetchWeather() async {
     try {
-      // Default coordinate (e.g., London 51.5074, -0.1278) 
+      // Default coordinate (e.g., London 51.5074, -0.1278)
       // In a real app, you'd use geolocator to get user's position
       const double lat = 12.9716; // Example: Bangalore
       const double lon = 77.5946;
-      
+
       final url = Uri.parse(
-        "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current_weather=true"
+        "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current_weather=true",
       );
-      
+
       final response = await http.get(url);
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final current = data["current_weather"];
         final double temp = current["temperature"];
         final int code = current["weathercode"];
-        
+
         if (mounted) {
           setState(() {
             _weatherTemp = "${temp.toStringAsFixed(1)}°C";
@@ -545,16 +581,19 @@ Future<void> _removeProfilePhoto() async {
   WeatherCondition _mapWeatherCode(int code) {
     final hour = DateTime.now().hour;
     bool isNight = hour >= 19 || hour < 6;
-    
+
     // WMO Weather interpretation codes (WW)
     if (code >= 61 && code <= 99) return WeatherCondition.rainy;
-    if (code >= 1 && code <= 3) return isNight ? WeatherCondition.night : WeatherCondition.cloudy;
-    if (code == 0) return isNight ? WeatherCondition.night : WeatherCondition.sunny;
+    if (code >= 1 && code <= 3)
+      return isNight ? WeatherCondition.night : WeatherCondition.cloudy;
+    if (code == 0)
+      return isNight ? WeatherCondition.night : WeatherCondition.sunny;
     return WeatherCondition.cloudy;
   }
 
   Widget _buildDrawer(BuildContext context, ColorScheme colorScheme) {
-    const Color iconColor = Color(0xFF3B82F6); // Lume Blue
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
     // ================= STATUS UI LOGIC =================
     late Color statusColor;
     late Color bgColor;
@@ -569,7 +608,6 @@ Future<void> _removeProfilePhoto() async {
         statusIcon = Icons.check_circle_rounded;
         statusText = "KYC Verified";
         break;
-
       case "booked":
       case "under process":
         statusColor = const Color(0xFF3B82F6); // Lume Blue
@@ -577,14 +615,12 @@ Future<void> _removeProfilePhoto() async {
         statusIcon = Icons.event_available_rounded;
         statusText = "KYC Booked";
         break;
-
       case "rejected":
         statusColor = Colors.redAccent;
         bgColor = const Color(0xFFFEF2F2);
         statusIcon = Icons.error_outline_rounded;
         statusText = "KYC Rejected";
         break;
-
       default:
         statusColor = Colors.orange;
         bgColor = const Color(0xFFFFF7ED);
@@ -592,234 +628,397 @@ Future<void> _removeProfilePhoto() async {
         statusText = "KYC Pending";
     }
 
-
     return Drawer(
-      width: MediaQuery.of(context).size.width * 0.85,
+      width: MediaQuery.of(context).size.width * 0.82,
       backgroundColor: colorScheme.surface,
+      elevation: 0,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.only(
-          topRight: Radius.circular(32),
-          bottomRight: Radius.circular(32),
+          topRight: Radius.circular(40),
+          bottomRight: Radius.circular(40),
         ),
       ),
-      child: Column(
+      child: Stack(
         children: [
-          // Simplified Drawer Header
+          if (isDark)
+            Positioned.fill(
+              child: CustomPaint(
+                painter: GalaxyDrawerPainter(
+                  isDark: isDark,
+                  primaryColor: colorScheme.primary,
+                ),
+              ),
+            ),
+          Column(
+            children: [
+          // Enhanced Premium Header
           Container(
-            padding: const EdgeInsets.fromLTRB(24, 60, 24, 24),
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(28, 64, 28, 32),
             decoration: BoxDecoration(
-              color: colorScheme.surface,
-              border: Border(bottom: BorderSide(color: colorScheme.outlineVariant.withOpacity(0.5))),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: isDark
+                    ? [
+                  colorScheme.primary.withOpacity(0.15),
+                  colorScheme.surface,
+                ]
+                    : [
+                  colorScheme.primary.withOpacity(0.08),
+                  colorScheme.surface,
+                ],
+              ),
+              borderRadius: const BorderRadius.only(
+                topRight: Radius.circular(40),
+              ),
             ),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Center(
-                  child: Stack(
-                    children: [
-                      Container(
-                        key: ValueKey(_profileImageUrl),
-                        width: 90,
-                        height: 90,
-                        decoration: BoxDecoration(
-                          color: colorScheme.primary.withOpacity(0.1), // Light version of primary
-                          shape: BoxShape.circle,
-                          image: _profileImageUrl != null && _profileImageUrl!.isNotEmpty 
-                            ? DecorationImage(
-                                image: NetworkImage("${ApiService.baseUrl}/uploads/profile_pics/$_profileImageUrl"),
-                                fit: BoxFit.cover,
-                              )
-                            : null,
-                        ),
-                        child: _profileImageUrl == null || _profileImageUrl!.isEmpty 
-                          ? Center(
-                              child: Text(
-                                _getInitials(_userName),
-                                style: const TextStyle(
-                                  color: iconColor,
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            )
-                          : null,
-                      ),
-                      Positioned(
-                        bottom: 0,
-                        right: 0,
-                        child: InkWell(
-                          onTap: _isUploading ? null : _showImageOptions,
-                          child: Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: const Color(0xFFF3F4F6), width: 1.5),
+                Row(
+                  children: [
+                    Stack(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: colorScheme.primary.withOpacity(0.3),
+                              width: 2,
                             ),
-                            child: _isUploading 
-                              ? const SizedBox(
-                                  width: 16, 
-                                  height: 16, 
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: iconColor)
-                                )
-                              : const Icon(Icons.camera_alt_rounded, size: 16, color: iconColor),
+                          ),
+                          child: Container(
+                            key: ValueKey(_profileImageUrl),
+                            width: 72,
+                            height: 72,
+                            decoration: BoxDecoration(
+                              color: colorScheme.primary.withOpacity(0.1),
+                              shape: BoxShape.circle,
+                              image:
+                                  _profileImageUrl != null &&
+                                          _profileImageUrl!.isNotEmpty
+                                      ? DecorationImage(
+                                          image: NetworkImage(
+                                            "${ApiService.baseUrl}/uploads/profile_pics/$_profileImageUrl",
+                                          ),
+                                          fit: BoxFit.cover,
+                                        )
+                                      : null,
+                            ),
+                            child: _profileImageUrl == null ||
+                                    _profileImageUrl!.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      _getInitials(_userName),
+                                      style: TextStyle(
+                                        color: colorScheme.primary,
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  )
+                                : null,
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  _userName,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    color: colorScheme.onSurface,
-                  ),
-                ),
-
-                const SizedBox(height: 6),
-
-                Text(
-                  _userPhone,
-                  style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13),
-                ),
-
-                const SizedBox(height: 2),
-
-                Text(
-                  _userEmail.isEmpty ? "No email provided" : _userEmail,
-                  style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13),
-                ),
-
-                const SizedBox(height: 14),
-
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: bgColor,
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(color: statusColor, width: 1.2),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(statusIcon, size: 16, color: statusColor),
-                      const SizedBox(width: 6),
-                      Text(
-                        statusText,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: statusColor,
+                        Positioned(
+                          bottom: 2,
+                          right: 2,
+                          child: GestureDetector(
+                            onTap: _isUploading ? null : _showImageOptions,
+                            child: Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primary,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: colorScheme.surface,
+                                  width: 2,
+                                ),
+                              ),
+                              child: _isUploading
+                                  ? const SizedBox(
+                                      width: 12,
+                                      height: 12,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.edit_rounded,
+                                      size: 14,
+                                      color: Colors.white,
+                                    ),
+                            ),
+                          ),
                         ),
+                      ],
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _userName,
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                              color: colorScheme.onSurface,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: bgColor,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(statusIcon, size: 12, color: statusColor),
+                                const SizedBox(width: 4),
+                                Text(
+                                  statusText.toUpperCase(),
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w900,
+                                    color: statusColor,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                // Quick Stats Strip
+                Row(
+                  children: [
+                    _buildQuickInfo(
+                      Icons.phone_android_rounded,
+                      _userPhone,
+                      colorScheme,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildQuickInfo(
+                        Icons.alternate_email_rounded,
+                        _userEmail.isEmpty ? "No Email" : _userEmail,
+                        colorScheme,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          
-          // Drawer Items
+
+          // Drawer Navigation Items
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.symmetric(vertical: 0),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               physics: const BouncingScrollPhysics(),
               children: [
-                const Divider(height: 1),
-                _buildDrawerSection("ACCOUNT", [
-                  _buildDrawerItem(Icons.badge_outlined, "My Profile", iconColor, () async {
-                  await Navigator.pushNamed(context, "/profile", arguments: {
-                    "student": {
-                      "full_name": _userName,
-                      "mobile": _userPhone,
-                      "email": _userEmail,
-                      "reg_no": _userRegNo,
-                      "department": _userDept,
-                      "institute_name": _userInstitute,
-                      "dob": _userDob,
-                      "blood_group": _userBloodGroup,
-                      "profile_image": _profileImageUrl,
-                      "batch_start_year": _userBatch.contains(" - ")
-                          ? _userBatch.split(" - ").first
-                          : null,
-                      "batch_end_year": _userBatch.contains(" - ")
-                          ? _userBatch.split(" - ").last
-                          : null,
-                    }
-                  });
-                  await _loadUserProfile();
-                }),
-                  _buildDrawerItem(Icons.credit_card_outlined, "Card", iconColor, () {
-                    _tabController.animateTo(1);
-                  }),
-                  _buildDrawerItem(Icons.card_giftcard_outlined, "Rewards", iconColor, () {
-                    _tabController.animateTo(2);
-                  }),
-                ]),
-                const Divider(height: 1),
-                _buildDrawerSection("EXPLORE", [
-                  _buildDrawerItem(Icons.school_outlined, "Scholar", iconColor, () {
-                    Navigator.pushNamed(context, "/scholar");
-                  }),
-                  _buildDrawerItem(Icons.location_city_outlined, "My Campus", iconColor, () {
-                      CampusAppPicker.show(context);
-                  }),
-                ]),
-                const Divider(height: 1),
-                _buildDrawerSection("SUPPORT", [
-                  _buildDrawerItem(Icons.headset_mic_outlined, "Help & Support", iconColor, () {
-                    Navigator.pushNamed(context, "/help-support");
-                  }),
-                  _buildDrawerItem(Icons.tune_rounded, "App Settings", iconColor, () {
-                    Navigator.pushNamed(context, "/app-settings");
-                  }),
-                ]),
-                const Divider(height: 1),
-                _buildDrawerSection("ABOUT", [
-                  _buildDrawerItem(Icons.info_outline_rounded, "About Lume", iconColor, () {
-                    Navigator.pushNamed(context, '/about');
-                  }),
-                  _buildDrawerItem(Icons.description_outlined, "Terms & Conditions", iconColor, () {
-                    Navigator.pushNamed(context, '/terms');
-                  }),
-                  _buildDrawerItem(Icons.privacy_tip_outlined, "Privacy Policy", iconColor, () {
-                    Navigator.pushNamed(context, '/privacy');
-                  }),
-                ]),
-                const Divider(height: 1),
-                // Logout and Logo moved INSIDE scrollable view
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-                  child: Column(
-                    children: [
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 24),
-                        title: const Text(
-                          "Logout",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.redAccent,
-                          ),
-                        ),
-                        onTap: () {
-                          Navigator.pushNamedAndRemoveUntil(context, "/loginpin", (_) => false);
+                _buildDrawerSection("MAIN MENU", [
+                  _buildDrawerItem(
+                    Icons.person_rounded,
+                    "My Profile",
+                    colorScheme,
+                    () async {
+                      await Navigator.pushNamed(
+                        context,
+                        "/profile",
+                        arguments: {
+                          "student": {
+                            "full_name": _userName,
+                            "mobile": _userPhone,
+                            "email": _userEmail,
+                            "reg_no": _userRegNo,
+                            "department": _userDept,
+                            "institute_name": _userInstitute,
+                            "dob": _userDob,
+                            "blood_group": _userBloodGroup,
+                            "profile_image": _profileImageUrl,
+                            "batch_start_year": _userBatch.contains(" - ")
+                                ? _userBatch.split(" - ").first
+                                : null,
+                            "batch_end_year": _userBatch.contains(" - ")
+                                ? _userBatch.split(" - ").last
+                                : null,
+                          },
                         },
+                      );
+                      await _loadUserProfile();
+                    },
+                  ),
+                  _buildDrawerItem(
+                    Icons.credit_card_rounded,
+                    "Virtual Card",
+                    colorScheme,
+                    () => _tabController.animateTo(1),
+                  ),
+                  _buildDrawerItem(
+                    Icons.card_giftcard_rounded,
+                    "My Rewards",
+                    colorScheme,
+                    () => _tabController.animateTo(2),
+                  ),
+                  _buildDrawerItem(
+                    Icons.directions_bus_rounded,
+                    "Transit",
+                    colorScheme,
+                    () => _tabController.animateTo(3),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+                _buildDrawerSection("EXPLORE", [
+                  _buildDrawerItem(
+                    Icons.auto_awesome_rounded,
+                    "Scholar Program",
+                    colorScheme,
+                    () => Navigator.pushNamed(context, "/scholar"),
+                  ),
+                  _buildDrawerItem(
+                    Icons.location_city_rounded,
+                    "My Campus",
+                    colorScheme,
+                    () => CampusAppPicker.show(context),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+                _buildDrawerSection("PREFERENCES", [
+                  _buildDrawerItem(
+                    Icons.headset_mic_rounded,
+                    "Support Center",
+                    colorScheme,
+                    () => Navigator.pushNamed(context, "/help-support"),
+                  ),
+                  _buildDrawerItem(
+                    Icons.tune_rounded,
+                    "App Settings",
+                    colorScheme,
+                    () => Navigator.pushNamed(context, "/app-settings"),
+                  ),
+                ]),
+
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+
+          // Refined Footer
+          Container(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                  color: colorScheme.outlineVariant.withOpacity(0.3),
+                ),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                GestureDetector(
+                  onTap: () {
+                    Navigator.pushNamedAndRemoveUntil(
+                      context,
+                      "/loginpin",
+                      (_) => false,
+                    );
+                  },
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.redAccent.withOpacity(0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.logout_rounded,
+                          color: Colors.redAccent,
+                          size: 20,
+                        ),
                       ),
-                      const SizedBox(height: 24),
-                      Image.asset("assets/logo.png", height: 35),
-                      const SizedBox(height: 8),
-                      Text(
-                        "Version 1.0.0",
-                        style: TextStyle(color: Colors.grey.shade400, fontSize: 12, fontWeight: FontWeight.w500),
+                      const SizedBox(width: 12),
+                      const Text(
+                        "Logout",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.redAccent,
+                        ),
                       ),
                     ],
                   ),
                 ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Image.asset("assets/logo.png", height: 28),
+                    const SizedBox(height: 4),
+                    Text(
+                      "v1.0.0",
+                      style: TextStyle(
+                        color: Colors.grey.shade400,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
               ],
+            ),
+          ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickInfo(IconData icon, String text, ColorScheme colorScheme) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withOpacity(0.35),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 14,
+            color: colorScheme.onSurfaceVariant.withOpacity(0.7),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         ],
@@ -832,14 +1031,14 @@ Future<void> _removeProfilePhoto() async {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+          padding: const EdgeInsets.fromLTRB(8, 16, 8, 12),
           child: Text(
             title,
             style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              color: Colors.grey.shade400,
-              letterSpacing: 1.1,
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+              color: Colors.grey.shade500,
+              letterSpacing: 1.5,
             ),
           ),
         ),
@@ -848,31 +1047,48 @@ Future<void> _removeProfilePhoto() async {
     );
   }
 
-  Widget _buildDrawerItem(IconData icon, String title, Color iconColor, VoidCallback onTap) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
-      leading: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: iconColor.withOpacity(0.12),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(icon, color: iconColor, size: 22),
+  Widget _buildDrawerItem(
+    IconData icon,
+    String title,
+    ColorScheme colorScheme,
+    VoidCallback onTap,
+  ) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
       ),
-      title: Text(
-        title,
-        style: TextStyle(
-          fontSize: 15,
-          fontWeight: FontWeight.w700,
-          color: Theme.of(context).colorScheme.onSurface,
-          letterSpacing: -0.3,
+      child: ListTile(
+        onTap: () {
+          _scaffoldKey.currentState?.closeDrawer();
+          onTap();
+        },
+        dense: true,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: colorScheme.primary.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: colorScheme.primary, size: 20),
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: colorScheme.onSurface,
+            letterSpacing: -0.2,
+          ),
+        ),
+        trailing: Icon(
+          Icons.chevron_right_rounded,
+          color: colorScheme.onSurfaceVariant.withOpacity(0.3),
+          size: 18,
         ),
       ),
-      onTap: () {
-        _scaffoldKey.currentState?.closeDrawer();
-        onTap();
-      },
-      trailing: Icon(Icons.chevron_right_rounded, color: Colors.grey.shade300, size: 20),
     );
   }
 
@@ -917,7 +1133,7 @@ Future<void> _removeProfilePhoto() async {
               builder: (context, child) {
                 final angle = _flipAnimation.value * 3.141592653589793;
                 final isBackVisible = angle > (3.141592653589793 / 2);
-                
+
                 return Transform(
                   transform: Matrix4.identity()
                     ..setEntry(3, 2, 0.001)
@@ -925,7 +1141,8 @@ Future<void> _removeProfilePhoto() async {
                   alignment: Alignment.center,
                   child: isBackVisible
                       ? Transform(
-                          transform: Matrix4.identity()..rotateY(3.141592653589793),
+                          transform: Matrix4.identity()
+                            ..rotateY(3.141592653589793),
                           alignment: Alignment.center,
                           child: _buildCardBack(context, colorScheme),
                         )
@@ -992,12 +1209,10 @@ Future<void> _removeProfilePhoto() async {
           Positioned.fill(
             child: Opacity(
               opacity: 0.05,
-              child: CustomPaint(
-                painter: BrushedMetalPainter(),
-              ),
+              child: CustomPaint(painter: BrushedMetalPainter()),
             ),
           ),
-          
+
           // Subtle Metallic Highlight
           Positioned.fill(
             child: Container(
@@ -1015,13 +1230,17 @@ Future<void> _removeProfilePhoto() async {
               ),
             ),
           ),
-          
+
           Positioned(
             right: -20,
             bottom: 30,
             child: Opacity(
               opacity: 0.1,
-              child: Image.asset("assets/logo.png", height: 200, color: Colors.white10),
+              child: Image.asset(
+                "assets/logo.png",
+                height: 200,
+                color: Colors.white10,
+              ),
             ),
           ),
 
@@ -1054,7 +1273,10 @@ Future<void> _removeProfilePhoto() async {
                               end: Alignment.bottomRight,
                             ),
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.black54, width: 0.5),
+                            border: Border.all(
+                              color: Colors.black54,
+                              width: 0.5,
+                            ),
                           ),
                           child: Stack(
                             children: [
@@ -1065,16 +1287,20 @@ Future<void> _removeProfilePhoto() async {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        const Icon(Icons.contactless_outlined, color: Colors.white70, size: 28),
+                        const Icon(
+                          Icons.contactless_outlined,
+                          color: Colors.white70,
+                          size: 28,
+                        ),
                       ],
                     ),
                   ),
                 ),
-                
+
                 const SizedBox(height: 20),
-                
+
                 const Spacer(),
-                
+
                 // Central Logo - LUME
                 Center(
                   child: Column(
@@ -1102,9 +1328,9 @@ Future<void> _removeProfilePhoto() async {
                     ],
                   ),
                 ),
-                
+
                 const Spacer(flex: 2),
-                
+
                 // Bottom Section - RuPay and Prepaid
                 Align(
                   alignment: Alignment.bottomRight,
@@ -1128,7 +1354,7 @@ Future<void> _removeProfilePhoto() async {
               ],
             ),
           ),
-          if (_isCardLocked || _isCardBlocked)
+          if (_isCardLocked || _isCardBlocked || _isCardFreezed)
             Positioned.fill(
               child: Container(
                 decoration: BoxDecoration(
@@ -1137,18 +1363,35 @@ Future<void> _removeProfilePhoto() async {
                 ),
                 child: Center(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
-                      color: Colors.redAccent.withOpacity(0.8),
+                      color: _isCardBlocked || _isCardLocked
+                          ? Colors.redAccent.withOpacity(0.8)
+                          : Colors.blueAccent.withOpacity(0.8),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(_isCardBlocked ? Icons.block_rounded : Icons.lock_rounded, color: Colors.white, size: 20),
+                        Icon(
+                          _isCardBlocked
+                              ? Icons.block_rounded
+                              : _isCardFreezed
+                              ? Icons.ac_unit_rounded
+                              : Icons.lock_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
                         const SizedBox(width: 8),
                         Text(
-                          _isCardBlocked ? "BLOCKED" : "LOCKED",
+                          _isCardBlocked
+                              ? "BLOCKED"
+                              : _isCardFreezed
+                              ? "FROZEN"
+                              : "LOCKED",
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w900,
@@ -1190,7 +1433,15 @@ Future<void> _removeProfilePhoto() async {
               Container(
                 width: 10,
                 decoration: const BoxDecoration(
-                  color: Color(0xFFE8820C),
+                  gradient: LinearGradient(
+                    colors: [
+                      Color(0xFF6D28D9), // Deep Purple
+                      Color(0xFF9333EA), // Bright Purple
+                      Color(0xFF7C3AED), // Medium Purple
+                    ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
                   borderRadius: BorderRadius.only(
                     topLeft: Radius.circular(24),
                     bottomLeft: Radius.circular(24),
@@ -1208,11 +1459,16 @@ Future<void> _removeProfilePhoto() async {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          Image.asset("assets/logos/university.png", height: 35),
+                          Image.asset(
+                            "assets/logos/university.png",
+                            height: 35,
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              _userInstitute.isEmpty ? "UNIVERSITY NAME" : _userInstitute,
+                              _userInstitute.isEmpty
+                                  ? "UNIVERSITY NAME"
+                                  : _userInstitute,
                               style: const TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w900,
@@ -1226,11 +1482,11 @@ Future<void> _removeProfilePhoto() async {
                           ),
                         ],
                       ),
-    
+
                       const SizedBox(height: 8),
                       _buildSimpleDivider(),
                       const SizedBox(height: 8),
-    
+
                       // Student Name
                       Text(
                         _userName.toUpperCase(),
@@ -1255,9 +1511,9 @@ Future<void> _removeProfilePhoto() async {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
-    
+
                       const SizedBox(height: 12),
-    
+
                       // Photo + Details row
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1269,15 +1525,24 @@ Future<void> _removeProfilePhoto() async {
                             decoration: BoxDecoration(
                               color: const Color(0xFFF3F4F6),
                               borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: const Color(0xFFE5E7EB), width: 1),
-                              image: _profileImageUrl != null && _profileImageUrl!.isNotEmpty
+                              border: Border.all(
+                                color: const Color(0xFFE5E7EB),
+                                width: 1,
+                              ),
+                              image:
+                                  _profileImageUrl != null &&
+                                      _profileImageUrl!.isNotEmpty
                                   ? DecorationImage(
-                                      image: NetworkImage("${ApiService.baseUrl}/uploads/profile_pics/$_profileImageUrl"),
+                                      image: NetworkImage(
+                                        "${ApiService.baseUrl}/uploads/profile_pics/$_profileImageUrl",
+                                      ),
                                       fit: BoxFit.cover,
                                     )
                                   : null,
                             ),
-                            child: _profileImageUrl == null || _profileImageUrl!.isEmpty
+                            child:
+                                _profileImageUrl == null ||
+                                    _profileImageUrl!.isEmpty
                                 ? Center(
                                     child: Text(
                                       _getInitials(_userName),
@@ -1296,21 +1561,35 @@ Future<void> _removeProfilePhoto() async {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _buildCardDetailRow("STUDENT ID", _userRegNo.isEmpty ? "-" : _userRegNo),
+                                _buildCardDetailRow(
+                                  "STUDENT ID",
+                                  _userRegNo.isEmpty ? "-" : _userRegNo,
+                                ),
                                 const SizedBox(height: 5),
-                                _buildCardDetailRow("BATCH", _userBatch.isEmpty ? "-" : _userBatch),
+                                _buildCardDetailRow(
+                                  "BATCH",
+                                  _userBatch.isEmpty ? "-" : _userBatch,
+                                ),
                                 const SizedBox(height: 5),
-                                _buildCardDetailRow("PHONE", _userPhone.isEmpty ? "-" : _userPhone),
+                                _buildCardDetailRow(
+                                  "PHONE",
+                                  _userPhone.isEmpty ? "-" : _userPhone,
+                                ),
                                 const SizedBox(height: 5),
-                                _buildCardDetailRow("BLOOD GR", _userBloodGroup.isEmpty ? "-" : _userBloodGroup),
+                                _buildCardDetailRow(
+                                  "BLOOD GR",
+                                  _userBloodGroup.isEmpty
+                                      ? "-"
+                                      : _userBloodGroup,
+                                ),
                               ],
                             ),
                           ),
                         ],
                       ),
-    
+
                       const Spacer(),
-    
+
                       // Footer: Signature + QR
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
@@ -1342,17 +1621,21 @@ Future<void> _removeProfilePhoto() async {
                               ),
                             ],
                           ),
-                          
+
                           // QR Code
                           Container(
                             padding: const EdgeInsets.all(4),
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              border: Border.all(color: const Color(0xFFE5E7EB)),
+                              border: Border.all(
+                                color: const Color(0xFFE5E7EB),
+                              ),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: QrImageView(
-                              data: _userRegNo.isEmpty ? "LUME_STUDENT" : _userRegNo,
+                              data: _userRegNo.isEmpty
+                                  ? "LUME_STUDENT"
+                                  : _userRegNo,
                               version: QrVersions.auto,
                               size: 60.0,
                               padding: EdgeInsets.zero,
@@ -1360,13 +1643,13 @@ Future<void> _removeProfilePhoto() async {
                           ),
                         ],
                       ),
-    
+
                       const SizedBox(height: 8),
                       const Text(
                         "This card is valid in India only.",
                         textAlign: TextAlign.start,
                         style: TextStyle(
-                          fontSize: 6.5, 
+                          fontSize: 6.5,
                           color: Color(0xFF9CA3AF),
                           height: 1.1,
                         ),
@@ -1388,7 +1671,10 @@ Future<void> _removeProfilePhoto() async {
                 ),
                 child: Center(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.redAccent.withOpacity(0.8),
                       borderRadius: BorderRadius.circular(12),
@@ -1396,7 +1682,13 @@ Future<void> _removeProfilePhoto() async {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(_isCardBlocked ? Icons.block_rounded : Icons.lock_rounded, color: Colors.white, size: 20),
+                        Icon(
+                          _isCardBlocked
+                              ? Icons.block_rounded
+                              : Icons.lock_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
                         const SizedBox(width: 8),
                         Text(
                           _isCardBlocked ? "BLOCKED" : "LOCKED",
@@ -1439,8 +1731,8 @@ Future<void> _removeProfilePhoto() async {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            const Color(0xFFE8820C).withOpacity(0.5),
-            const Color(0xFFE8820C).withOpacity(0.1),
+            const Color(0xFF7C3AED).withOpacity(0.4), // Metallic Purple
+            const Color(0xFF7C3AED).withOpacity(0.1),
             Colors.transparent,
           ],
         ),
@@ -1465,7 +1757,7 @@ Future<void> _removeProfilePhoto() async {
         Text(
           value,
           style: const TextStyle(
-            fontSize: 11, 
+            fontSize: 11,
             fontWeight: FontWeight.w700,
             color: Color(0xFF1A1A2E),
           ),
@@ -1475,12 +1767,17 @@ Future<void> _removeProfilePhoto() async {
     );
   }
 
-
-
-  Widget _buildProfileIcon({required ColorScheme colorScheme, bool isOnDark = false}) {
+  Widget _buildProfileIcon({
+    required ColorScheme colorScheme,
+    bool isOnDark = false,
+  }) {
     final Color iconColor = isOnDark ? Colors.white : colorScheme.primary;
-    final Color borderColor = isOnDark ? Colors.white.withOpacity(0.5) : colorScheme.primary.withOpacity(0.2);
-    final Color bgColor = isOnDark ? Colors.white.withOpacity(0.2) : colorScheme.primary.withOpacity(0.1);
+    final Color borderColor = isOnDark
+        ? Colors.white.withOpacity(0.5)
+        : colorScheme.primary.withOpacity(0.2);
+    final Color bgColor = isOnDark
+        ? Colors.white.withOpacity(0.2)
+        : colorScheme.primary.withOpacity(0.1);
 
     return IconButton(
       icon: Container(
@@ -1493,10 +1790,15 @@ Future<void> _removeProfilePhoto() async {
         child: CircleAvatar(
           key: ValueKey(_profileImageUrl),
           radius: 18,
-          backgroundColor: isOnDark ? Colors.white24 : colorScheme.primary.withOpacity(0.05),
-          backgroundImage: _profileImageUrl != null && _profileImageUrl!.isNotEmpty
-          ? NetworkImage("${ApiService.baseUrl}/uploads/profile_pics/$_profileImageUrl")
-          : null,
+          backgroundColor: isOnDark
+              ? Colors.white24
+              : colorScheme.primary.withOpacity(0.05),
+          backgroundImage:
+              _profileImageUrl != null && _profileImageUrl!.isNotEmpty
+              ? NetworkImage(
+                  "${ApiService.baseUrl}/uploads/profile_pics/$_profileImageUrl",
+                )
+              : null,
           child: _profileImageUrl == null || _profileImageUrl!.isEmpty
               ? Text(
                   _getInitials(_userName),
@@ -1521,12 +1823,20 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: -20,
               right: -20,
-              child: Icon(Icons.wb_sunny_rounded, size: 200, color: Colors.white.withOpacity(0.15)),
+              child: Icon(
+                Icons.wb_sunny_rounded,
+                size: 200,
+                color: Colors.white.withOpacity(0.15),
+              ),
             ),
             Positioned(
               top: 40,
               left: 20,
-              child: Icon(Icons.wb_sunny_rounded, size: 100, color: Colors.white.withOpacity(0.08)),
+              child: Icon(
+                Icons.wb_sunny_rounded,
+                size: 100,
+                color: Colors.white.withOpacity(0.08),
+              ),
             ),
           ],
         );
@@ -1536,12 +1846,20 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: 20,
               right: 20,
-              child: Icon(Icons.cloud_rounded, size: 180, color: Colors.white.withOpacity(0.12)),
+              child: Icon(
+                Icons.cloud_rounded,
+                size: 180,
+                color: Colors.white.withOpacity(0.12),
+              ),
             ),
             Positioned(
               bottom: 40,
               left: -30,
-              child: Icon(Icons.cloud_rounded, size: 140, color: Colors.white.withOpacity(0.08)),
+              child: Icon(
+                Icons.cloud_rounded,
+                size: 140,
+                color: Colors.white.withOpacity(0.08),
+              ),
             ),
           ],
         );
@@ -1551,13 +1869,24 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: 0,
               right: 40,
-              child: Icon(Icons.umbrella_rounded, size: 160, color: Colors.white.withOpacity(0.1)),
+              child: Icon(
+                Icons.umbrella_rounded,
+                size: 160,
+                color: Colors.white.withOpacity(0.1),
+              ),
             ),
-            ...List.generate(15, (index) => Positioned(
-              top: (index * 20) % 200,
-              left: (index * 30) % 400,
-              child: Icon(Icons.water_drop_rounded, size: 12, color: Colors.white.withOpacity(0.15)),
-            )),
+            ...List.generate(
+              15,
+              (index) => Positioned(
+                top: (index * 20) % 200,
+                left: (index * 30) % 400,
+                child: Icon(
+                  Icons.water_drop_rounded,
+                  size: 12,
+                  color: Colors.white.withOpacity(0.15),
+                ),
+              ),
+            ),
           ],
         );
       case WeatherCondition.night:
@@ -1566,13 +1895,24 @@ Future<void> _removeProfilePhoto() async {
             Positioned(
               top: 10,
               right: 30,
-              child: Icon(Icons.nightlight_round, size: 120, color: Colors.white.withOpacity(0.15)),
+              child: Icon(
+                Icons.nightlight_round,
+                size: 120,
+                color: Colors.white.withOpacity(0.15),
+              ),
             ),
-            ...List.generate(20, (index) => Positioned(
-              top: (index * 15) % 250.0,
-              left: (index * 25) % 450.0,
-              child: Icon(Icons.star_rounded, size: 8, color: Colors.white.withOpacity(0.2)),
-            )),
+            ...List.generate(
+              20,
+              (index) => Positioned(
+                top: (index * 15) % 250.0,
+                left: (index * 25) % 450.0,
+                child: Icon(
+                  Icons.star_rounded,
+                  size: 8,
+                  color: Colors.white.withOpacity(0.2),
+                ),
+              ),
+            ),
           ],
         );
     }
@@ -1588,41 +1928,42 @@ Future<void> _removeProfilePhoto() async {
       builder: (context, child) {
         final bool isHome = _tabController.index == 0;
         final int currentIndex = _tabController.index;
-        
+
         return Scaffold(
           key: _scaffoldKey,
           backgroundColor: colorScheme.surface,
           drawer: _buildDrawer(context, colorScheme),
           body: Stack(
-              children: [
-                // Background Gradient accent
-                Positioned(
-                  top: -100,
-                  right: -100,
-                  child: Container(
-                    width: 300,
-                    height: 300,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [
-                          colorScheme.secondary.withOpacity(0.4),
-                          Colors.transparent,
-                        ],
-                      ),
+            children: [
+              // Background Gradient accent
+              Positioned(
+                top: -100,
+                right: -100,
+                child: Container(
+                  width: 300,
+                  height: 300,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        colorScheme.secondary.withOpacity(0.4),
+                        Colors.transparent,
+                      ],
                     ),
                   ),
                 ),
-                
-                Column(
-                  children: [
-                    if (isHome)
+              ),
+
+              Column(
+                children: [
+                  if (isHome)
                     // Fixed Premium Header
                     Container(
                       height: size.height * 0.35,
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
-                          colors: _weatherThemes[_currentCondition]!.gradientColors,
+                          colors:
+                              _weatherThemes[_currentCondition]!.gradientColors,
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
@@ -1638,7 +1979,7 @@ Future<void> _removeProfilePhoto() async {
                               child: _buildWeatherAccents(),
                             ),
                           ),
-                          
+
                           // Profile Icon removed from here, now in global Stack for consistency
 
                           // Header Content
@@ -1651,7 +1992,8 @@ Future<void> _removeProfilePhoto() async {
                               children: [
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       Text(
@@ -1676,15 +2018,22 @@ Future<void> _removeProfilePhoto() async {
                                       ),
                                       const SizedBox(height: 12),
                                       Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 4,
+                                        ),
                                         decoration: BoxDecoration(
                                           color: Colors.black.withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
                                         ),
                                         child: Text(
                                           _getFormattedDate(),
                                           style: TextStyle(
-                                            color: Colors.white.withOpacity(0.8),
+                                            color: Colors.white.withOpacity(
+                                              0.8,
+                                            ),
                                             fontSize: 11,
                                             fontWeight: FontWeight.w500,
                                           ),
@@ -1698,7 +2047,10 @@ Future<void> _removeProfilePhoto() async {
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(24),
                                   child: BackdropFilter(
-                                    filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                                    filter: ui.ImageFilter.blur(
+                                      sigmaX: 10,
+                                      sigmaY: 10,
+                                    ),
                                     child: Container(
                                       padding: const EdgeInsets.all(14),
                                       decoration: BoxDecoration(
@@ -1712,7 +2064,11 @@ Future<void> _removeProfilePhoto() async {
                                       child: Column(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Icon(_weatherIcon, color: Colors.white, size: 28),
+                                          Icon(
+                                            _weatherIcon,
+                                            color: Colors.white,
+                                            size: 28,
+                                          ),
                                           const SizedBox(height: 6),
                                           Text(
                                             _weatherTemp,
@@ -1726,7 +2082,9 @@ Future<void> _removeProfilePhoto() async {
                                           Text(
                                             _weatherDesc.toUpperCase(),
                                             style: TextStyle(
-                                              color: Colors.white.withOpacity(0.7),
+                                              color: Colors.white.withOpacity(
+                                                0.7,
+                                              ),
                                               fontSize: 9,
                                               fontWeight: FontWeight.w600,
                                             ),
@@ -1742,36 +2100,48 @@ Future<void> _removeProfilePhoto() async {
                         ],
                       ),
                     )
-                    else 
+                  else
                     SizedBox(height: MediaQuery.of(context).padding.top + 56),
 
-                    // Content Area
-                    Expanded(
-                      child: Container(
-                        transform: isHome ? Matrix4.translationValues(0, -25, 0) : null,
-                        decoration: BoxDecoration(
-                          color: colorScheme.surface,
-                          borderRadius: isHome ? const BorderRadius.only(
-                            topLeft: Radius.circular(32),
-                            topRight: Radius.circular(32),
-                          ) : null,
-                        ),
-                        child: TabBarView(
-                          controller: _tabController,
-                          children: [
-                            _TabKeepAliveWrapper(child: _buildHomeTab(context, colorScheme)),
-                            _TabKeepAliveWrapper(child: _buildCardTab(context, colorScheme)),
-                            _TabKeepAliveWrapper(child: _buildRewardsTab(context, colorScheme)),
-                            _TabKeepAliveWrapper(child: _buildTransitTab(context, colorScheme)),
-                          ],
-                        ),
+                  // Content Area
+                  Expanded(
+                    child: Container(
+                      transform: isHome
+                          ? Matrix4.translationValues(0, -25, 0)
+                          : null,
+                      decoration: BoxDecoration(
+                        color: colorScheme.surface,
+                        borderRadius: isHome
+                            ? const BorderRadius.only(
+                                topLeft: Radius.circular(32),
+                                topRight: Radius.circular(32),
+                              )
+                            : null,
+                      ),
+                      child: TabBarView(
+                        controller: _tabController,
+                        children: [
+                          _TabKeepAliveWrapper(
+                            child: _buildHomeTab(context, colorScheme),
+                          ),
+                          _TabKeepAliveWrapper(
+                            child: _buildCardTab(context, colorScheme),
+                          ),
+                          _TabKeepAliveWrapper(
+                            child: _buildRewardsTab(context, colorScheme),
+                          ),
+                          _TabKeepAliveWrapper(
+                            child: _buildTransitTab(context, colorScheme),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
+              ),
 
-                // Custom Header for other tabs
-                if (!isHome)
+              // Custom Header for other tabs
+              if (!isHome)
                 Positioned(
                   top: 0,
                   left: 0,
@@ -1780,7 +2150,9 @@ Future<void> _removeProfilePhoto() async {
                     height: MediaQuery.of(context).padding.top + 56,
                     color: colorScheme.surface,
                     child: Padding(
-                      padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
+                      padding: EdgeInsets.only(
+                        top: MediaQuery.of(context).padding.top,
+                      ),
                       child: Center(
                         child: Text(
                           ["Home", "Card", "Rewards", "Transit"][currentIndex],
@@ -1795,14 +2167,17 @@ Future<void> _removeProfilePhoto() async {
                   ),
                 ),
 
-                // Fixed Profile Icon - Consistent across all tabs
-                Positioned(
-                  top: MediaQuery.of(context).padding.top + 10,
-                  left: 12,
-                  child: _buildProfileIcon(colorScheme: colorScheme, isOnDark: isHome),
+              // Fixed Profile Icon - Consistent across all tabs
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 10,
+                left: 12,
+                child: _buildProfileIcon(
+                  colorScheme: colorScheme,
+                  isOnDark: isHome,
                 ),
-              ],
-            ),
+              ),
+            ],
+          ),
           bottomNavigationBar: Container(
             decoration: BoxDecoration(
               color: colorScheme.surface,
@@ -1828,13 +2203,25 @@ Future<void> _removeProfilePhoto() async {
                   dividerColor: Colors.transparent,
                   labelColor: colorScheme.primary,
                   unselectedLabelColor: Colors.grey.shade500,
-                  labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-                  unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  labelStyle: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                  unselectedLabelStyle: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
                   tabs: const [
                     Tab(icon: Icon(Icons.home_rounded), text: "Home"),
                     Tab(icon: Icon(Icons.credit_card_rounded), text: "Card"),
-                    Tab(icon: Icon(Icons.emoji_events_rounded), text: "Rewards"),
-                    Tab(icon: Icon(Icons.directions_bus_rounded), text: "Transit"),
+                    Tab(
+                      icon: Icon(Icons.emoji_events_rounded),
+                      text: "Rewards",
+                    ),
+                    Tab(
+                      icon: Icon(Icons.directions_bus_rounded),
+                      text: "Transit",
+                    ),
                   ],
                 ),
               ),
@@ -1938,7 +2325,9 @@ Future<void> _removeProfilePhoto() async {
                       offset: const Offset(0, 10),
                     ),
                   ],
-                  border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
+                  border: Border.all(
+                    color: colorScheme.outlineVariant.withOpacity(0.5),
+                  ),
                 ),
                 child: Column(
                   children: [
@@ -1952,11 +2341,15 @@ Future<void> _removeProfilePhoto() async {
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: colorScheme.primaryContainer.withOpacity(0.3),
+                                  color: colorScheme.primaryContainer
+                                      .withOpacity(0.3),
                                   shape: BoxShape.circle,
                                 ),
-                                child: Icon(Icons.wallet_rounded,
-                                    color: colorScheme.primary, size: 22),
+                                child: Icon(
+                                  Icons.wallet_rounded,
+                                  color: colorScheme.primary,
+                                  size: 22,
+                                ),
                               ),
                               const SizedBox(height: 12),
                               Text(
@@ -1988,11 +2381,15 @@ Future<void> _removeProfilePhoto() async {
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: colorScheme.primaryContainer.withOpacity(0.3),
+                                  color: colorScheme.primaryContainer
+                                      .withOpacity(0.3),
                                   shape: BoxShape.circle,
                                 ),
-                                child: Icon(Icons.currency_rupee_rounded,
-                                    color: colorScheme.primary, size: 22),
+                                child: Icon(
+                                  Icons.currency_rupee_rounded,
+                                  color: colorScheme.primary,
+                                  size: 22,
+                                ),
                               ),
                               const SizedBox(height: 12),
                               Text(
@@ -2026,7 +2423,7 @@ Future<void> _removeProfilePhoto() async {
                       decoration: BoxDecoration(
                         color: Colors.transparent,
                         image: DecorationImage(
-                          image: const AssetImage("assets/images/KYC.png"), 
+                          image: const AssetImage("assets/images/KYC.png"),
                           fit: BoxFit.contain,
                         ),
                       ),
@@ -2046,91 +2443,109 @@ Future<void> _removeProfilePhoto() async {
                         padding: const EdgeInsets.all(20),
                         constraints: const BoxConstraints(minHeight: 160),
                         decoration: BoxDecoration(
-                        color: colorScheme.surface,
-                        borderRadius: BorderRadius.circular(24),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(isDark ? 0.3 : 0.04),
-                            blurRadius: 15,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                        border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: colorScheme.primaryContainer.withOpacity(0.3),
-                              shape: BoxShape.circle,
+                          color: colorScheme.surface,
+                          borderRadius: BorderRadius.circular(24),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(
+                                isDark ? 0.3 : 0.04,
+                              ),
+                              blurRadius: 15,
+                              offset: const Offset(0, 8),
                             ),
-                            child: Icon(Icons.badge_rounded,
-                                color: colorScheme.primary, size: 22),
+                          ],
+                          border: Border.all(
+                            color: colorScheme.outlineVariant.withOpacity(0.5),
                           ),
-                          const Spacer(),
-                          Text(
-                            "Keep your Identity documents (PAN/Aadhaar) ready for verification",
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: colorScheme.onSurfaceVariant,
-                              fontWeight: FontWeight.w500,
-                              height: 1.4,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primaryContainer.withOpacity(
+                                  0.3,
+                                ),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                Icons.badge_rounded,
+                                color: colorScheme.primary,
+                                size: 22,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.all(20),
-                      constraints: const BoxConstraints(minHeight: 160),
-                      decoration: BoxDecoration(
-                        color: colorScheme.surface,
-                        borderRadius: BorderRadius.circular(24),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(isDark ? 0.3 : 0.04),
-                            blurRadius: 15,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                        border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: colorScheme.primaryContainer.withOpacity(0.3),
-                              shape: BoxShape.circle,
+                            const Spacer(),
+                            Text(
+                              "Keep your Identity documents (PAN/Aadhaar) ready for verification",
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w500,
+                                height: 1.4,
+                              ),
                             ),
-                            child: Icon(Icons.wifi_rounded,
-                                color: colorScheme.primary, size: 22),
-                          ),
-                          const Spacer(),
-                          Text(
-                            "A stable internet connection ensures a seamless onboarding process.",
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: colorScheme.onSurfaceVariant,
-                              fontWeight: FontWeight.w500,
-                              height: 1.4,
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        constraints: const BoxConstraints(minHeight: 160),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surface,
+                          borderRadius: BorderRadius.circular(24),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(
+                                isDark ? 0.3 : 0.04,
+                              ),
+                              blurRadius: 15,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                          border: Border.all(
+                            color: colorScheme.outlineVariant.withOpacity(0.5),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primaryContainer.withOpacity(
+                                  0.3,
+                                ),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                Icons.wifi_rounded,
+                                color: colorScheme.primary,
+                                size: 22,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              "A stable internet connection ensures a seamless onboarding process.",
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w500,
+                                height: 1.4,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 25),
-              
+              const SizedBox(height: 25),
+
               // Terms & Conditions Checkbox
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -2144,7 +2559,9 @@ Future<void> _removeProfilePhoto() async {
                         value: _isTermsAccepted,
                         activeColor: colorScheme.primary,
                         checkColor: colorScheme.onPrimary,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
                         onChanged: (val) {
                           setState(() {
                             _isTermsAccepted = val ?? false;
@@ -2168,7 +2585,8 @@ Future<void> _removeProfilePhoto() async {
                               alignment: PlaceholderAlignment.baseline,
                               baseline: TextBaseline.alphabetic,
                               child: GestureDetector(
-                                onTap: () => Navigator.pushNamed(context, '/terms'),
+                                onTap: () =>
+                                    Navigator.pushNamed(context, '/terms'),
                                 child: Text(
                                   "Terms & conditions",
                                   style: TextStyle(
@@ -2184,7 +2602,8 @@ Future<void> _removeProfilePhoto() async {
                               alignment: PlaceholderAlignment.baseline,
                               baseline: TextBaseline.alphabetic,
                               child: GestureDetector(
-                                onTap: () => Navigator.pushNamed(context, '/privacy'),
+                                onTap: () =>
+                                    Navigator.pushNamed(context, '/privacy'),
                                 child: Text(
                                   "Privacy Policy",
                                   style: TextStyle(
@@ -2206,7 +2625,7 @@ Future<void> _removeProfilePhoto() async {
             ],
           ),
         ),
-        
+
         // Floating button at the bottom
         Positioned(
           left: 24,
@@ -2216,10 +2635,12 @@ Future<void> _removeProfilePhoto() async {
             width: double.infinity,
             height: 56,
             child: ElevatedButton(
-              onPressed: !_isTermsAccepted ? null : () async {
-                await Navigator.pushNamed(context, "/kyc");
-                await _loadUserProfile();
-              },
+              onPressed: !_isTermsAccepted
+                  ? null
+                  : () async {
+                      await Navigator.pushNamed(context, "/kyc");
+                      await _loadUserProfile();
+                    },
               style: ElevatedButton.styleFrom(
                 backgroundColor: colorScheme.primary,
                 foregroundColor: colorScheme.onPrimary,
@@ -2231,10 +2652,7 @@ Future<void> _removeProfilePhoto() async {
               ),
               child: const Text(
                 "Complete KYC",
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ),
           ),
@@ -2243,7 +2661,10 @@ Future<void> _removeProfilePhoto() async {
     );
   }
 
-  Widget _buildKYCUnderProcessView(BuildContext context, ColorScheme colorScheme) {
+  Widget _buildKYCUnderProcessView(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     return Stack(
       children: [
@@ -2264,7 +2685,9 @@ Future<void> _removeProfilePhoto() async {
                       offset: const Offset(0, 10),
                     ),
                   ],
-                  border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
+                  border: Border.all(
+                    color: colorScheme.outlineVariant.withOpacity(0.5),
+                  ),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -2290,10 +2713,14 @@ Future<void> _removeProfilePhoto() async {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.calendar_today_rounded, size: 16, color: colorScheme.primary),
+                          Icon(
+                            Icons.calendar_today_rounded,
+                            size: 16,
+                            color: colorScheme.primary,
+                          ),
                           const SizedBox(width: 8),
-                            Text(
-                              _kycSlotTime != null 
+                          Text(
+                            _kycSlotTime != null
                                 ? "Scheduled for $_kycSlotDate at $_kycSlotTime"
                                 : "Scheduled for $_kycSlotDate",
                             textAlign: TextAlign.center,
@@ -2309,8 +2736,8 @@ Future<void> _removeProfilePhoto() async {
                     ],
                     Text(
                       _isSlotTimeReached()
-                        ? "Your slot is now active. Please click continue."
-                        : "We will notify you once the KYC is completed",
+                          ? "Your slot is now active. Please click continue."
+                          : "We will notify you once the KYC is completed",
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 15,
@@ -2321,11 +2748,11 @@ Future<void> _removeProfilePhoto() async {
                   ],
                 ),
               ),
-              const SizedBox(height: 100), 
+              const SizedBox(height: 100),
             ],
           ),
         ),
-        
+
         // Floating Button
         Positioned(
           left: 24,
@@ -2336,13 +2763,17 @@ Future<void> _removeProfilePhoto() async {
             height: 56,
             child: ElevatedButton(
               onPressed: _isSlotTimeReached()
-                ? () {
-                    _tabController.animateTo(0); // Go back to Home
-                  }
-                : null,
+                  ? () {
+                      _tabController.animateTo(0); // Go back to Home
+                    }
+                  : null,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _isSlotTimeReached() ? colorScheme.primary : colorScheme.onSurface.withOpacity(0.12),
-                foregroundColor: _isSlotTimeReached() ? colorScheme.onPrimary : colorScheme.onSurface.withOpacity(0.04),
+                backgroundColor: _isSlotTimeReached()
+                    ? colorScheme.primary
+                    : colorScheme.onSurface.withOpacity(0.12),
+                foregroundColor: _isSlotTimeReached()
+                    ? colorScheme.onPrimary
+                    : colorScheme.onSurface.withOpacity(0.04),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
@@ -2350,7 +2781,9 @@ Future<void> _removeProfilePhoto() async {
                 shadowColor: colorScheme.primary.withOpacity(0.3),
               ),
               child: Text(
-                _isSlotTimeReached() ? "Continue" : "Waiting for Confirmation...",
+                _isSlotTimeReached()
+                    ? "Continue"
+                    : "Waiting for Confirmation...",
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -2369,7 +2802,7 @@ Future<void> _removeProfilePhoto() async {
     if (_kycStatus == "Pending") {
       return _buildKYCPendingView(context, colorScheme);
     }
-    
+
     if (_kycStatus == "Booked") {
       return _buildKYCUnderProcessView(context, colorScheme);
     }
@@ -2395,9 +2828,16 @@ Future<void> _removeProfilePhoto() async {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (_kycStatus == "Completed") ...[
+                _buildBalanceStrip(colorScheme),
                 _buildFlippingCard(context, colorScheme),
                 const SizedBox(height: 30),
                 _buildCardActions(context, colorScheme),
+
+                const SizedBox(height: 35),
+                if (_orderStatus == "NOT_REQUESTED")
+                  _buildOrderCardSuggestion(context, colorScheme)
+                else if (_orderStatus != "RECEIVED")
+                  _buildOrderStatusCard(context, colorScheme),
 
                 const SizedBox(height: 35),
 
@@ -2407,6 +2847,75 @@ Future<void> _removeProfilePhoto() async {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildBalanceStrip(ColorScheme colorScheme) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
+          ),
+        ],
+        border: Border.all(
+          color: colorScheme.outlineVariant.withOpacity(0.3),
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Card Balance",
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: colorScheme.onSurfaceVariant.withOpacity(0.7),
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 4),
+              GestureDetector(
+                onTap:
+                    () => setState(() => _isBalanceVisible = !_isBalanceVisible),
+                child: Row(
+                  children: [
+                    Text(
+                      _isBalanceVisible
+                          ? "₹ ${NumberFormat('#,##,##0.00').format(_cardBalance)}"
+                          : "₹ ••••••",
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                        color: colorScheme.onSurface,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      _isBalanceVisible
+                          ? Icons.visibility_off_rounded
+                          : Icons.visibility_rounded,
+                      size: 18,
+                      color: colorScheme.primary.withOpacity(0.6),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          _buildRuPayLogo(fontSize: 16),
+        ],
+      ),
     );
   }
 
@@ -2431,7 +2940,9 @@ Future<void> _removeProfilePhoto() async {
                       offset: const Offset(0, 10),
                     ),
                   ],
-                  border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
+                  border: Border.all(
+                    color: colorScheme.outlineVariant.withOpacity(0.5),
+                  ),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -2472,7 +2983,7 @@ Future<void> _removeProfilePhoto() async {
             ],
           ),
         ),
-        
+
         // Floating Button
         Positioned(
           left: 24,
@@ -2497,10 +3008,7 @@ Future<void> _removeProfilePhoto() async {
               ),
               child: const Text(
                 "Re-Verify",
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ),
           ),
@@ -2554,12 +3062,20 @@ Future<void> _removeProfilePhoto() async {
                       children: [
                         const Text(
                           "Your Points",
-                          style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                         const SizedBox(height: 6),
                         Row(
                           children: [
-                            const Icon(Icons.stars_rounded, color: Colors.white, size: 28),
+                            const Icon(
+                              Icons.stars_rounded,
+                              color: Colors.white,
+                              size: 28,
+                            ),
                             const SizedBox(width: 8),
                             const Text(
                               "2,450",
@@ -2578,17 +3094,25 @@ Future<void> _removeProfilePhoto() async {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: Colors.orange.shade700,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
                         elevation: 0,
                       ),
-                      child: const Text("Redeem", style: TextStyle(fontWeight: FontWeight.bold)),
+                      child: const Text(
+                        "Redeem",
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 40),
-              
+
               // Featured Deals
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2601,10 +3125,7 @@ Future<void> _removeProfilePhoto() async {
                       color: colorScheme.onSurface,
                     ),
                   ),
-                  TextButton(
-                    onPressed: () {},
-                    child: const Text("View All"),
-                  ),
+                  TextButton(onPressed: () {}, child: const Text("View All")),
                 ],
               ),
               const SizedBox(height: 16),
@@ -2614,14 +3135,29 @@ Future<void> _removeProfilePhoto() async {
                   scrollDirection: Axis.horizontal,
                   physics: const BouncingScrollPhysics(),
                   children: [
-                    _buildOfferCard("20% Off", "At Campus Store", Icons.shopping_bag_rounded, Colors.blue),
-                    _buildOfferCard("Free Coffee", "At Red Cup Cafe", Icons.coffee_rounded, Colors.brown),
-                    _buildOfferCard("BOGO Movie", "PVR Cinemas", Icons.movie_rounded, Colors.red),
+                    _buildOfferCard(
+                      "20% Off",
+                      "At Campus Store",
+                      Icons.shopping_bag_rounded,
+                      Colors.blue,
+                    ),
+                    _buildOfferCard(
+                      "Free Coffee",
+                      "At Red Cup Cafe",
+                      Icons.coffee_rounded,
+                      Colors.brown,
+                    ),
+                    _buildOfferCard(
+                      "BOGO Movie",
+                      "PVR Cinemas",
+                      Icons.movie_rounded,
+                      Colors.red,
+                    ),
                   ],
                 ),
               ),
               const SizedBox(height: 40),
-              
+
               // Categories
               Text(
                 "Categories",
@@ -2635,10 +3171,26 @@ Future<void> _removeProfilePhoto() async {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _buildCategoryIcon(Icons.restaurant_rounded, "Food", Colors.green),
-                  _buildCategoryIcon(Icons.shopping_cart_rounded, "Shop", Colors.purple),
-                  _buildCategoryIcon(Icons.local_taxi_rounded, "Travel", Colors.amber),
-                  _buildCategoryIcon(Icons.sports_esports_rounded, "Games", Colors.pink),
+                  _buildCategoryIcon(
+                    Icons.restaurant_rounded,
+                    "Food",
+                    Colors.green,
+                  ),
+                  _buildCategoryIcon(
+                    Icons.shopping_cart_rounded,
+                    "Shop",
+                    Colors.purple,
+                  ),
+                  _buildCategoryIcon(
+                    Icons.local_taxi_rounded,
+                    "Travel",
+                    Colors.amber,
+                  ),
+                  _buildCategoryIcon(
+                    Icons.sports_esports_rounded,
+                    "Games",
+                    Colors.pink,
+                  ),
                 ],
               ),
               const SizedBox(height: 30),
@@ -2698,7 +3250,12 @@ Future<void> _removeProfilePhoto() async {
     );
   }
 
-  Widget _buildOfferCard(String title, String subtitle, IconData icon, Color color) {
+  Widget _buildOfferCard(
+    String title,
+    String subtitle,
+    IconData icon,
+    Color color,
+  ) {
     return Container(
       width: 140,
       margin: const EdgeInsets.only(right: 16),
@@ -2716,11 +3273,19 @@ Future<void> _removeProfilePhoto() async {
           const SizedBox(height: 16),
           Text(
             title,
-            style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 18),
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+            ),
           ),
           Text(
             subtitle,
-            style: TextStyle(color: color.withOpacity(0.7), fontSize: 12, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              color: color.withOpacity(0.7),
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ],
       ),
@@ -2750,7 +3315,9 @@ Future<void> _removeProfilePhoto() async {
   void _showCardDetails() async {
     if (_authToken == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Authentication session expired. Please login again.")),
+        const SnackBar(
+          content: Text("Authentication session expired. Please login again."),
+        ),
       );
       return;
     }
@@ -2775,13 +3342,16 @@ Future<void> _removeProfilePhoto() async {
       }
 
       setState(() {
-      _cardNumber = res["card_number"];
-      _cardCvv = res["cvv"].toString();
-      _isCardLocked = res["card_lock"] == "LOCKED" || res["card_lock"] == true;
-        
+        _cardNumber = res["card_number"];
+        _cardCvv = res["cvv"].toString();
+        _isCardLocked =
+            res["card_lock"] == "LOCKED" || res["card_lock"] == true;
+
         final month = res["expiry_month"].toString().padLeft(2, '0');
         final year = res["expiry_year"].toString();
-        final shortYear = year.length > 2 ? year.substring(year.length - 2) : year;
+        final shortYear = year.length > 2
+            ? year.substring(year.length - 2)
+            : year;
         _cardExpiry = "$month/$shortYear";
       });
 
@@ -2789,9 +3359,9 @@ Future<void> _removeProfilePhoto() async {
     } catch (e) {
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error: ${e.toString()}")),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error: ${e.toString()}")));
       }
     }
   }
@@ -2874,7 +3444,9 @@ Future<void> _removeProfilePhoto() async {
                       child: OutlinedButton(
                         onPressed: () => Navigator.pop(sheetContext),
                         style: OutlinedButton.styleFrom(
-                          side: BorderSide(color: colorScheme.outlineVariant.withOpacity(0.5)),
+                          side: BorderSide(
+                            color: colorScheme.outlineVariant.withOpacity(0.5),
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
@@ -2898,28 +3470,35 @@ Future<void> _removeProfilePhoto() async {
                         onPressed: () async {
                           if (_authToken == null) return;
                           Navigator.pop(sheetContext);
-                          
+
                           // Show loading indicator
                           showDialog(
                             context: context,
                             barrierDismissible: false,
-                            builder: (dialogContext) => const Center(child: CircularProgressIndicator()),
+                            builder: (dialogContext) => const Center(
+                              child: CircularProgressIndicator(),
+                            ),
                           );
 
                           bool success = false;
                           try {
                             if (_isCardLocked) {
-                              final res = await ApiService.unlockCard(_authToken!);
+                              final res = await ApiService.unlockCard(
+                                _authToken!,
+                              );
                               success = res["success"] == true;
                             } else {
-                              final res = await ApiService.lockCard(_authToken!);
+                              final res = await ApiService.lockCard(
+                                _authToken!,
+                              );
                               success = res["success"] == true;
                             }
                           } catch (e) {
                             debugPrint("Error toggling card lock: $e");
                           }
 
-                          if (mounted) Navigator.pop(context); // Close loading dialog
+                          if (mounted)
+                            Navigator.pop(context); // Close loading dialog
 
                           if (success) {
                             setState(() {
@@ -2934,10 +3513,14 @@ Future<void> _removeProfilePhoto() async {
                             if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: const Text("Failed to update card status. Please try again."),
+                                  content: const Text(
+                                    "Failed to update card status. Please try again.",
+                                  ),
                                   backgroundColor: colorScheme.error,
                                   behavior: SnackBarBehavior.floating,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
                                 ),
                               );
                             }
@@ -2969,7 +3552,6 @@ Future<void> _removeProfilePhoto() async {
       },
     );
   }
-
 
   void _showCardStatusDialog(String message) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -3065,7 +3647,6 @@ Future<void> _removeProfilePhoto() async {
     );
   }
 
-
   void _displayCardDetailsDialog() {
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -3082,11 +3663,20 @@ Future<void> _removeProfilePhoto() async {
             builder: (context, setState) {
               final String displayNum = isNumberHidden
                   ? "****\n****\n****\n${_cardNumber?.substring((_cardNumber?.length ?? 4) - 4) ?? "0000"}"
-                  : _cardNumber?.replaceAllMapped(RegExp(r".{4}"), (match) => "${match.group(0)}\n").trim() ?? "0000\n0000\n0000\n0000";
+                  : _cardNumber
+                            ?.replaceAllMapped(
+                              RegExp(r".{4}"),
+                              (match) => "${match.group(0)}\n",
+                            )
+                            .trim() ??
+                        "0000\n0000\n0000\n0000";
 
               return Dialog(
                 backgroundColor: Colors.transparent,
-                insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                insetPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 24,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -3096,7 +3686,10 @@ Future<void> _removeProfilePhoto() async {
                       height: 440,
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
-                          colors: const [Color(0xFF4B5563), Color(0xFF374151)], // Ash grey for both themes
+                          colors: const [
+                            Color(0xFF4B5563),
+                            Color(0xFF374151),
+                          ], // Ash grey for both themes
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
@@ -3128,7 +3721,7 @@ Future<void> _removeProfilePhoto() async {
                               ),
                             ),
                           ),
-                          
+
                           Padding(
                             padding: const EdgeInsets.all(24.0),
                             child: Column(
@@ -3136,7 +3729,8 @@ Future<void> _removeProfilePhoto() async {
                               children: [
                                 // Top Row: Bank Name & Contactless
                                 Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
                                   children: [
                                     Text(
                                       "LUME",
@@ -3147,32 +3741,48 @@ Future<void> _removeProfilePhoto() async {
                                         letterSpacing: 2.0,
                                       ),
                                     ),
-                                    Icon(Icons.wifi_rounded, color: Colors.white.withOpacity(0.8), size: 28),
+                                    Icon(
+                                      Icons.wifi_rounded,
+                                      color: Colors.white.withOpacity(0.8),
+                                      size: 28,
+                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: 30),
-                                
+
                                 // Chip & Tap Icon
-                                Container(
-                                  width: 42,
-                                  height: 52,
-                                  decoration: BoxDecoration(
-                                    color: Colors.amber.shade200,
-                                    borderRadius: BorderRadius.circular(8),
-                                    gradient: LinearGradient(
-                                      colors: [Colors.amber.shade200, Colors.amber.shade400],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Container(
+                                    width: 42,
+                                    height: 52,
+                                    decoration: BoxDecoration(
+                                      color: Colors.amber.shade200,
+                                      borderRadius: BorderRadius.circular(8),
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          Colors.amber.shade200,
+                                          Colors.amber.shade400,
+                                        ],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.2),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
                                     ),
-                                    boxShadow: [
-                                      BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 4, offset: const Offset(0, 2)),
-                                    ],
+                                    child: CustomPaint(
+                                      painter: ChipLinesPainter(),
+                                    ),
                                   ),
-                                  child: CustomPaint(painter: ChipLinesPainter()),
                                 ),
-                                
+
                                 const Spacer(),
-                                
+
                                 // Card Number (Vertical format)
                                 Row(
                                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -3187,24 +3797,34 @@ Future<void> _removeProfilePhoto() async {
                                           letterSpacing: 4.0,
                                           height: 1.8,
                                           shadows: [
-                                            Shadow(color: Colors.black.withOpacity(0.3), offset: const Offset(0, 2), blurRadius: 4),
+                                            Shadow(
+                                              color: Colors.black.withOpacity(
+                                                0.3,
+                                              ),
+                                              offset: const Offset(0, 2),
+                                              blurRadius: 4,
+                                            ),
                                           ],
                                         ),
                                       ),
                                     ),
                                     IconButton(
                                       icon: Icon(
-                                        isNumberHidden ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                                        isNumberHidden
+                                            ? Icons.visibility_off_rounded
+                                            : Icons.visibility_rounded,
                                         color: Colors.white.withOpacity(0.7),
                                       ),
-                                      onPressed: () => setState(() => isNumberHidden = !isNumberHidden),
+                                      onPressed: () => setState(
+                                        () => isNumberHidden = !isNumberHidden,
+                                      ),
                                     ),
                                   ],
                                 ),
-                                
+
                                 const SizedBox(height: 20),
-                                
-                              // Bottom Row: Name, Expiry, CVV
+
+                                // Bottom Row: Name, Expiry, CVV
                                 Row(
                                   crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
@@ -3212,39 +3832,63 @@ Future<void> _removeProfilePhoto() async {
                                     Expanded(
                                       flex: 5,
                                       child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
                                           Text(
                                             "CARDHOLDER",
-                                            style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 8, letterSpacing: 1.0),
+                                            style: TextStyle(
+                                              color: Colors.white.withOpacity(
+                                                0.5,
+                                              ),
+                                              fontSize: 8,
+                                              letterSpacing: 1.0,
+                                            ),
                                           ),
                                           const SizedBox(height: 4),
                                           Text(
                                             _userName.toUpperCase(),
-                                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 1.5),
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.bold,
+                                              letterSpacing: 1.5,
+                                            ),
                                             maxLines: 2,
                                             overflow: TextOverflow.visible,
                                           ),
                                         ],
                                       ),
                                     ),
-                                    
+
                                     const SizedBox(width: 8),
 
                                     // Valid Thru
                                     Expanded(
                                       flex: 3,
                                       child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
                                           Text(
                                             "VALID THRU",
-                                            style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 8, letterSpacing: 1.0),
+                                            style: TextStyle(
+                                              color: Colors.white.withOpacity(
+                                                0.5,
+                                              ),
+                                              fontSize: 8,
+                                              letterSpacing: 1.0,
+                                            ),
                                           ),
                                           const SizedBox(height: 4),
                                           Text(
                                             _cardExpiry ?? "--/--",
-                                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 1.0),
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.bold,
+                                              letterSpacing: 1.0,
+                                            ),
                                             textAlign: TextAlign.right,
                                           ),
                                         ],
@@ -3252,34 +3896,57 @@ Future<void> _removeProfilePhoto() async {
                                     ),
                                   ],
                                 ),
-                                
+
                                 const SizedBox(height: 16),
-                                
+
                                 // CVV Row & RuPay
                                 Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
                                   crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
                                     Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           "CVV",
-                                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 8, letterSpacing: 1.0),
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(
+                                              0.5,
+                                            ),
+                                            fontSize: 8,
+                                            letterSpacing: 1.0,
+                                          ),
                                         ),
                                         const SizedBox(height: 4),
                                         Row(
                                           children: [
                                             Text(
-                                              isCvvHidden ? "***" : _cardCvv ?? "---",
-                                              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 2.0),
+                                              isCvvHidden
+                                                  ? "***"
+                                                  : _cardCvv ?? "---",
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                letterSpacing: 2.0,
+                                              ),
                                             ),
                                             const SizedBox(width: 8),
                                             InkWell(
-                                              onTap: () => setState(() => isCvvHidden = !isCvvHidden),
+                                              onTap: () => setState(
+                                                () =>
+                                                    isCvvHidden = !isCvvHidden,
+                                              ),
                                               child: Icon(
-                                                isCvvHidden ? Icons.visibility_off_rounded : Icons.visibility_rounded,
-                                                color: Colors.white.withOpacity(0.7),
+                                                isCvvHidden
+                                                    ? Icons
+                                                          .visibility_off_rounded
+                                                    : Icons.visibility_rounded,
+                                                color: Colors.white.withOpacity(
+                                                  0.7,
+                                                ),
                                                 size: 16,
                                               ),
                                             ),
@@ -3287,10 +3954,11 @@ Future<void> _removeProfilePhoto() async {
                                         ),
                                       ],
                                     ),
-                                    
+
                                     // RuPay Logo Mock
                                     Column(
-                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
                                       children: [
                                         _buildRuPayLogo(fontSize: 14),
                                         const SizedBox(height: 4),
@@ -3313,20 +3981,27 @@ Future<void> _removeProfilePhoto() async {
                         ],
                       ),
                     ),
-                    
+
                     const SizedBox(height: 32),
-                    
+
                     // Close Button
                     InkWell(
                       onTap: () => Navigator.pop(context),
                       borderRadius: BorderRadius.circular(30),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 16,
+                        ),
                         decoration: BoxDecoration(
                           color: colorScheme.surface,
                           borderRadius: BorderRadius.circular(30),
                           boxShadow: [
-                            BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 4)),
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
                           ],
                         ),
                         child: Text(
@@ -3342,7 +4017,7 @@ Future<void> _removeProfilePhoto() async {
                   ],
                 ),
               );
-            }
+            },
           ),
         );
       },
@@ -3352,7 +4027,12 @@ Future<void> _removeProfilePhoto() async {
   Widget _buildCardActions(BuildContext context, ColorScheme colorScheme) {
     final iconColor = colorScheme.primary;
 
-    Widget actionItem(IconData icon, String label, VoidCallback? onTap, {bool isEnabled = true}) {
+    Widget actionItem(
+      IconData icon,
+      String label,
+      VoidCallback? onTap, {
+      bool isEnabled = true,
+    }) {
       return Column(
         children: [
           InkWell(
@@ -3364,10 +4044,16 @@ Future<void> _removeProfilePhoto() async {
                 width: 72,
                 height: 72,
                 decoration: BoxDecoration(
-                  color: (isEnabled ? iconColor : Colors.grey).withOpacity(0.15),
+                  color: (isEnabled ? iconColor : Colors.grey).withOpacity(
+                    0.15,
+                  ),
                   borderRadius: BorderRadius.circular(22),
                 ),
-                child: Icon(icon, color: isEnabled ? iconColor : Colors.grey, size: 32),
+                child: Icon(
+                  icon,
+                  color: isEnabled ? iconColor : Colors.grey,
+                  size: 32,
+                ),
               ),
             ),
           ),
@@ -3377,11 +4063,11 @@ Future<void> _removeProfilePhoto() async {
             style: TextStyle(
               fontWeight: FontWeight.w700,
               fontSize: 14,
-              color: isEnabled 
+              color: isEnabled
                   ? Theme.of(context).colorScheme.onSurface
                   : Colors.grey,
             ),
-          )
+          ),
         ],
       );
     }
@@ -3422,7 +4108,10 @@ Future<void> _removeProfilePhoto() async {
     );
   }
 
-  Widget _buildTransactionsSection(BuildContext context, ColorScheme colorScheme) {
+  Widget _buildTransactionsSection(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -3431,10 +4120,7 @@ Future<void> _removeProfilePhoto() async {
           children: [
             const Text(
               "Card Transactions",
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
             ),
             GestureDetector(
               onTap: () => Navigator.pushNamed(context, "/transactions"),
@@ -3449,14 +4135,18 @@ Future<void> _removeProfilePhoto() async {
                     ),
                   ),
                   const SizedBox(width: 4),
-                  Icon(Icons.chevron_right_rounded, size: 18, color: colorScheme.primary),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 18,
+                    color: colorScheme.primary,
+                  ),
                 ],
               ),
             ),
           ],
         ),
         const SizedBox(height: 16),
-        
+
         if (_recentTransactions.isEmpty)
           Container(
             width: double.infinity,
@@ -3464,11 +4154,17 @@ Future<void> _removeProfilePhoto() async {
             decoration: BoxDecoration(
               color: colorScheme.surface,
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.3)),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withOpacity(0.3),
+              ),
             ),
             child: Column(
               children: [
-                Icon(Icons.receipt_long_outlined, size: 48, color: colorScheme.onSurfaceVariant.withOpacity(0.5)),
+                Icon(
+                  Icons.receipt_long_outlined,
+                  size: 48,
+                  color: colorScheme.onSurfaceVariant.withOpacity(0.5),
+                ),
                 const SizedBox(height: 12),
                 Text(
                   "No transactions done",
@@ -3482,14 +4178,733 @@ Future<void> _removeProfilePhoto() async {
             ),
           )
         else
-          ..._recentTransactions.take(5).map((tx) => _buildTransactionItem(tx, colorScheme)).toList(),
+          ..._recentTransactions
+              .take(5)
+              .map((tx) => _buildTransactionItem(tx, colorScheme))
+              .toList(),
       ],
+    );
+  }
+
+  Widget _buildOrderCardSuggestion(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            colorScheme.primary.withOpacity(isDark ? 0.15 : 0.08),
+            colorScheme.primary.withOpacity(isDark ? 0.05 : 0.02),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(
+          color: colorScheme.primary.withOpacity(0.2),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colorScheme.primary.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.credit_card_rounded,
+                  color: colorScheme.primary,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Order Physical Card",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: colorScheme.onSurface,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      "Get your elegant physical Lume card delivered to your doorstep.",
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton(
+              onPressed: () => _showOrderCardFormSheet(context, colorScheme),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colorScheme.primary,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    "Order Now",
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                  ),
+                  SizedBox(width: 8),
+                  Icon(Icons.arrow_forward_rounded, size: 18),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showOrderCardFormSheet(BuildContext context, ColorScheme colorScheme) {
+    final TextEditingController addressController = TextEditingController();
+    final TextEditingController cityController = TextEditingController();
+    final TextEditingController stateController = TextEditingController();
+    final TextEditingController pincodeController = TextEditingController();
+    final TextEditingController phoneController = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          bool isFetchingPincode = false;
+
+          bool isFormValid() {
+            return addressController.text.trim().isNotEmpty &&
+                cityController.text.trim().isNotEmpty &&
+                stateController.text.trim().isNotEmpty &&
+                pincodeController.text.trim().isNotEmpty &&
+                phoneController.text.trim().isNotEmpty;
+          }
+
+          void checkPincode(String value) async {
+            if (value.length == 6) {
+              setSheetState(() => isFetchingPincode = true);
+              try {
+                final data = await ApiService.getPincodeDetails(value);
+                if (data != null && data is List && data.isNotEmpty) {
+                  final status = data[0]["Status"];
+                  if (status == "Success") {
+                    final postOffice = data[0]["PostOffice"][0];
+                    cityController.text = postOffice["District"];
+                    stateController.text = postOffice["State"];
+                  }
+                }
+              } catch (_) {}
+              if (mounted) {
+                setSheetState(() => isFetchingPincode = false);
+              }
+            }
+          }
+
+          Widget buildTextField(
+              String label, IconData icon, TextEditingController controller,
+              {TextInputType? keyboardType,
+              bool isReadOnly = false,
+              Widget? suffix}) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: controller,
+                  keyboardType: keyboardType,
+                  readOnly: isReadOnly,
+                  onChanged: (val) {
+                    setSheetState(() {});
+                    if (label == "Pincode") {
+                      checkPincode(val);
+                    }
+                  },
+                  decoration: InputDecoration(
+                    prefixIcon:
+                        Icon(icon, color: colorScheme.primary, size: 20),
+                    suffixIcon: suffix,
+                    hintText: "Enter $label",
+                    filled: true,
+                    fillColor: isReadOnly
+                        ? colorScheme.surfaceVariant.withOpacity(0.1)
+                        : colorScheme.surfaceVariant.withOpacity(0.3),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.all(18),
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
+            );
+          }
+
+          return Container(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom + 32,
+              top: 32,
+              left: 24,
+              right: 24,
+            ),
+            decoration: BoxDecoration(
+              color: Theme.of(context).scaffoldBackgroundColor,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(32),
+              ),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        "Delivery Details",
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          color: colorScheme.onSurface,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    "Please provide your permanent address for physical card delivery.",
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  buildTextField(
+                      "Full Address", Icons.home_rounded, addressController),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: buildTextField(
+                            "Pincode", Icons.pin_drop_rounded, pincodeController,
+                            keyboardType: TextInputType.number,
+                            suffix: isFetchingPincode
+                                ? Transform.scale(
+                                    scale: 0.5,
+                                    child: const CircularProgressIndicator(
+                                        strokeWidth: 3),
+                                  )
+                                : null),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: buildTextField("Phone Number",
+                            Icons.phone_android_rounded, phoneController,
+                            keyboardType: TextInputType.phone),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: buildTextField(
+                            "City", Icons.location_city_rounded, cityController,
+                            isReadOnly: true),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: buildTextField(
+                            "State", Icons.map_rounded, stateController,
+                            isReadOnly: true),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: isFormValid()
+                          ? () async {
+                              Navigator.pop(context); // Close sheet
+                              _executeOrderCard({
+                                "address": addressController.text.trim(),
+                                "city": cityController.text.trim(),
+                                "state": stateController.text.trim(),
+                                "pincode": pincodeController.text.trim(),
+                                "phone": phoneController.text.trim(),
+                              });
+                            }
+                          : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: colorScheme.primary,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor:
+                            colorScheme.onSurface.withOpacity(0.12),
+                        disabledForegroundColor:
+                            colorScheme.onSurface.withOpacity(0.38),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: const Text(
+                        "Order Physical Card",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _executeOrderCard(Map<String, String> details) async {
+    // Show loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final res = await ApiService.orderCard(_authToken!, details);
+      if (mounted) Navigator.pop(context); // Close loading
+
+      if (res["success"] == true) {
+        setState(() {
+          _orderStatus = "ORDERED";
+        });
+        _showCardStatusDialog("Card Ordered Successfully!");
+        HapticFeedback.heavyImpact();
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(res["error"] ?? "Failed to order card"),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Error: ${e.toString()}"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<bool?> _showDeliveryConfirmationSheet() {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(32),
+            topRight: Radius.circular(32),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 20,
+              offset: const Offset(0, -5),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: colorScheme.outlineVariant,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 32),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: colorScheme.primary.withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.mark_as_unread_rounded,
+                color: colorScheme.primary,
+                size: 40,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              "Card Received?",
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+                color: colorScheme.onSurface,
+                letterSpacing: -0.5,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              "Have you successfully received your physical Lume card? This will complete the order lifecycle.",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 15,
+                color: colorScheme.onSurfaceVariant,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 32),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      side: BorderSide(color: colorScheme.outline),
+                    ),
+                    child: Text(
+                      "Not Yet",
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      HapticFeedback.mediumImpact();
+                      Navigator.pop(context, true);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: colorScheme.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: const Text(
+                      "Yes, Received",
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrderStatusCard(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    String displayStatus = _orderStatus;
+    IconData statusIcon = Icons.inventory_2_rounded;
+    Color statusColor = Colors.orange;
+    double progress = 0.2;
+
+    if (_orderStatus == "ORDERED") {
+      displayStatus = "Order Placed";
+      statusIcon = Icons.inventory_2_rounded;
+      statusColor = Colors.orange;
+      progress = 0.25;
+    } else if (_orderStatus == "PRINTING") {
+      displayStatus = "Card Printed";
+      statusIcon = Icons.print_rounded;
+      statusColor = Colors.blue;
+      progress = 0.5;
+    } else if (_orderStatus == "DISPATCHED") {
+      displayStatus = "Dispatched";
+      statusIcon = Icons.local_shipping_rounded;
+      statusColor = Colors.purple;
+      progress = 0.75;
+    } else if (_orderStatus == "DELIVERED") {
+      displayStatus = "Delivered";
+      statusIcon = Icons.home_rounded;
+      statusColor = colorScheme.primary;
+      progress = 1.0;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+        border: Border.all(
+          color: colorScheme.outlineVariant.withOpacity(0.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  statusIcon,
+                  color: statusColor,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Ordered Card Status",
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      displayStatus,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                        color: colorScheme.onSurface,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Stack(
+            children: [
+              Container(
+                height: 8,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: colorScheme.outlineVariant.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              FractionallySizedBox(
+                widthFactor: progress,
+                child: Container(
+                  height: 8,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [statusColor, statusColor.withOpacity(0.7)],
+                    ),
+                    borderRadius: BorderRadius.circular(4),
+                    boxShadow: [
+                      BoxShadow(
+                        color: statusColor.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildStatusLabel("Order Placed", progress >= 0.25, colorScheme),
+              _buildStatusLabel("Printed", progress >= 0.5, colorScheme),
+              _buildStatusLabel("Dispatched", progress >= 0.75, colorScheme),
+              _buildStatusLabel("Delivered", progress >= 1.0, colorScheme),
+            ],
+          ),
+          if (_orderStatus == "DELIVERED") ...[
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                onPressed: () async {
+                  bool? confirm = await _showDeliveryConfirmationSheet();
+
+                  if (confirm != true) return;
+
+                  // Haptic feedback
+                  HapticFeedback.heavyImpact();
+
+                  if (!mounted) return;
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
+                  );
+
+                  try {
+                    final res =
+                        await ApiService.confirmCardReceipt(_authToken!);
+                    if (mounted) Navigator.pop(context); // Close loading
+
+                    if (res["success"] == true) {
+                      setState(() {
+                        _orderStatus = "RECEIVED";
+                      });
+                      _showCardStatusDialog("Congratulations! Enjoy your card.");
+                    } else {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content:
+                                Text(res["error"] ?? "Failed to confirm"),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text("Error: ${e.toString()}"),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.check_circle_rounded, size: 18),
+                    SizedBox(width: 8),
+                    Text(
+                      "Confirm Received",
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusLabel(String label, bool isActive, ColorScheme colorScheme) {
+    return Text(
+      label,
+      style: TextStyle(
+        fontSize: 10,
+        fontWeight: FontWeight.w700,
+        color: isActive ? colorScheme.onSurface : colorScheme.onSurfaceVariant.withOpacity(0.5),
+      ),
     );
   }
 
   Widget _buildTransactionItem(dynamic tx, ColorScheme colorScheme) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     IconData icon;
     Color iconColor;
     Color iconBgColor;
@@ -3545,7 +4960,9 @@ Future<void> _removeProfilePhoto() async {
             offset: const Offset(0, 4),
           ),
         ],
-        border: Border.all(color: colorScheme.outlineVariant.withOpacity(isDark ? 0.5 : 0.2)),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withOpacity(isDark ? 0.5 : 0.2),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3620,7 +5037,8 @@ class _TabKeepAliveWrapper extends StatefulWidget {
   State<_TabKeepAliveWrapper> createState() => _TabKeepAliveWrapperState();
 }
 
-class _TabKeepAliveWrapperState extends State<_TabKeepAliveWrapper> with AutomaticKeepAliveClientMixin {
+class _TabKeepAliveWrapperState extends State<_TabKeepAliveWrapper>
+    with AutomaticKeepAliveClientMixin {
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -3631,10 +5049,7 @@ class _TabKeepAliveWrapperState extends State<_TabKeepAliveWrapper> with Automat
   bool get wantKeepAlive => true;
 }
 
-
-
 // --- Custom Painters ---
-
 
 class CardDecorativePainter extends CustomPainter {
   final Color color;
@@ -3651,11 +5066,17 @@ class CardDecorativePainter extends CustomPainter {
 
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: size.width * 0.7),
-      0, 3.14159, false, paint,
+      0,
+      3.14159,
+      false,
+      paint,
     );
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: size.width * 0.9),
-      0, 3.14159, false, paint,
+      0,
+      3.14159,
+      false,
+      paint,
     );
   }
 
@@ -3673,15 +5094,35 @@ class ChipLinesPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
 
     // Vertical divider line in the middle
-    canvas.drawLine(Offset(size.width / 2, 0), Offset(size.width / 2, size.height), paint);
+    canvas.drawLine(
+      Offset(size.width / 2, 0),
+      Offset(size.width / 2, size.height),
+      paint,
+    );
 
     // Horizontal lines dividing into rows
-    canvas.drawLine(Offset(0, size.height / 3), Offset(size.width, size.height / 3), paint);
-    canvas.drawLine(Offset(0, 2 * size.height / 3), Offset(0, 2 * size.height / 3), paint); // Optimization error in my head, wait
+    canvas.drawLine(
+      Offset(0, size.height / 3),
+      Offset(size.width, size.height / 3),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(0, 2 * size.height / 3),
+      Offset(0, 2 * size.height / 3),
+      paint,
+    ); // Optimization error in my head, wait
 
     // Correcting lines for vertical chip
-    canvas.drawLine(Offset(0, size.height / 3), Offset(size.width, size.height / 3), paint);
-    canvas.drawLine(Offset(0, 2 * size.height / 3), Offset(size.width, 2 * size.height / 3), paint);
+    canvas.drawLine(
+      Offset(0, size.height / 3),
+      Offset(size.width, size.height / 3),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(0, 2 * size.height / 3),
+      Offset(size.width, 2 * size.height / 3),
+      paint,
+    );
 
     // Small central square (vertical)
     final rect = Rect.fromCenter(
@@ -3708,19 +5149,28 @@ class SignaturePainter extends CustomPainter {
     final path = Path();
     path.moveTo(0, size.height * 0.7);
     path.cubicTo(
-      size.width * 0.15, size.height * 0.2,
-      size.width * 0.25, size.height * 0.9,
-      size.width * 0.4, size.height * 0.4,
+      size.width * 0.15,
+      size.height * 0.2,
+      size.width * 0.25,
+      size.height * 0.9,
+      size.width * 0.4,
+      size.height * 0.4,
     );
     path.cubicTo(
-      size.width * 0.5, size.height * 0.1,
-      size.width * 0.6, size.height * 0.8,
-      size.width * 0.75, size.height * 0.5,
+      size.width * 0.5,
+      size.height * 0.1,
+      size.width * 0.6,
+      size.height * 0.8,
+      size.width * 0.75,
+      size.height * 0.5,
     );
     path.cubicTo(
-      size.width * 0.85, size.height * 0.3,
-      size.width * 0.92, size.height * 0.6,
-      size.width, size.height * 0.5,
+      size.width * 0.85,
+      size.height * 0.3,
+      size.width * 0.92,
+      size.height * 0.6,
+      size.width,
+      size.height * 0.5,
     );
     canvas.drawPath(path, paint);
   }
@@ -3738,11 +5188,7 @@ class BrushedMetalPainter extends CustomPainter {
 
     for (double i = 0; i < size.height; i += 2) {
       double x = (i * 13) % size.width;
-      canvas.drawLine(
-        Offset(x, i),
-        Offset((x + 100) % size.width, i),
-        paint,
-      );
+      canvas.drawLine(Offset(x, i), Offset((x + 100) % size.width, i), paint);
     }
   }
 
@@ -3767,24 +5213,24 @@ class CardBackgroundPainter extends CustomPainter {
     for (int i = 0; i < 6; i++) {
       final double xPos = size.width * (0.2 + (i % 2) * 0.4);
       final double yPos = size.height * (0.1 + i * 0.15);
-      
+
       canvas.save();
       canvas.translate(xPos, yPos);
       canvas.rotate(0.2 * (i + 1));
-      
+
       final rect = RRect.fromRectAndRadius(
         const Rect.fromLTWH(-60, -40, 120, 80),
         const Radius.circular(8),
       );
       canvas.drawRRect(rect, paint);
-      
+
       // Draw a small "chip" inside
       final chipRect = RRect.fromRectAndRadius(
         const Rect.fromLTWH(-45, -15, 20, 15),
         const Radius.circular(2),
       );
       canvas.drawRRect(chipRect, paint);
-      
+
       canvas.restore();
     }
 
@@ -3793,9 +5239,21 @@ class CardBackgroundPainter extends CustomPainter {
       ..color = color.withOpacity(isDark ? 0.06 : 0.04)
       ..style = PaintingStyle.fill;
 
-    canvas.drawCircle(Offset(size.width * 0.85, size.height * 0.15), 60, dotPaint);
-    canvas.drawCircle(Offset(size.width * 0.1, size.height * 0.45), 40, dotPaint);
-    canvas.drawCircle(Offset(size.width * 0.7, size.height * 0.8), 80, dotPaint);
+    canvas.drawCircle(
+      Offset(size.width * 0.85, size.height * 0.15),
+      60,
+      dotPaint,
+    );
+    canvas.drawCircle(
+      Offset(size.width * 0.1, size.height * 0.45),
+      40,
+      dotPaint,
+    );
+    canvas.drawCircle(
+      Offset(size.width * 0.7, size.height * 0.8),
+      80,
+      dotPaint,
+    );
   }
 
   @override
@@ -3824,12 +5282,24 @@ class HomeBackgroundPainter extends CustomPainter {
       final double xPos = size.width * (0.1 + (i % 3) * 0.35);
       final double yPos = size.height * (0.1 + i * 0.12);
       final IconData icon = icons[i % icons.length];
-      
-      _drawIcon(canvas, icon, Offset(xPos, yPos), 40, color.withOpacity(opacity));
+
+      _drawIcon(
+        canvas,
+        icon,
+        Offset(xPos, yPos),
+        40,
+        color.withOpacity(opacity),
+      );
     }
   }
 
-  void _drawIcon(Canvas canvas, IconData icon, Offset center, double size, Color color) {
+  void _drawIcon(
+    Canvas canvas,
+    IconData icon,
+    Offset center,
+    double size,
+    Color color,
+  ) {
     final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
     textPainter.text = TextSpan(
       text: String.fromCharCode(icon.codePoint),
@@ -3841,11 +5311,14 @@ class HomeBackgroundPainter extends CustomPainter {
       ),
     );
     textPainter.layout();
-    textPainter.paint(canvas, center - Offset(textPainter.width / 2, textPainter.height / 2));
+    textPainter.paint(
+      canvas,
+      center - Offset(textPainter.width / 2, textPainter.height / 2),
+    );
   }
 
   @override
-  bool shouldRepaint(covariant HomeBackgroundPainter oldDelegate) => 
+  bool shouldRepaint(covariant HomeBackgroundPainter oldDelegate) =>
       oldDelegate.color != color || oldDelegate.isDark != isDark;
 }
 
@@ -3869,12 +5342,24 @@ class RewardsBackgroundPainter extends CustomPainter {
       final double xPos = size.width * (0.15 + (i % 3) * 0.32);
       final double yPos = size.height * (0.05 + i * 0.13);
       final IconData icon = icons[i % icons.length];
-      
-      _drawIcon(canvas, icon, Offset(xPos, yPos), 45, color.withOpacity(opacity));
+
+      _drawIcon(
+        canvas,
+        icon,
+        Offset(xPos, yPos),
+        45,
+        color.withOpacity(opacity),
+      );
     }
   }
 
-  void _drawIcon(Canvas canvas, IconData icon, Offset center, double size, Color color) {
+  void _drawIcon(
+    Canvas canvas,
+    IconData icon,
+    Offset center,
+    double size,
+    Color color,
+  ) {
     final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
     textPainter.text = TextSpan(
       text: String.fromCharCode(icon.codePoint),
@@ -3886,11 +5371,14 @@ class RewardsBackgroundPainter extends CustomPainter {
       ),
     );
     textPainter.layout();
-    textPainter.paint(canvas, center - Offset(textPainter.width / 2, textPainter.height / 2));
+    textPainter.paint(
+      canvas,
+      center - Offset(textPainter.width / 2, textPainter.height / 2),
+    );
   }
 
   @override
-  bool shouldRepaint(covariant RewardsBackgroundPainter oldDelegate) => 
+  bool shouldRepaint(covariant RewardsBackgroundPainter oldDelegate) =>
       oldDelegate.color != color || oldDelegate.isDark != isDark;
 }
 
@@ -3914,12 +5402,24 @@ class TransitBackgroundPainter extends CustomPainter {
       final double xPos = size.width * (0.2 + (i % 2) * 0.5);
       final double yPos = size.height * (0.1 + i * 0.15);
       final IconData icon = icons[i % icons.length];
-      
-      _drawIcon(canvas, icon, Offset(xPos, yPos), 42, color.withOpacity(opacity));
+
+      _drawIcon(
+        canvas,
+        icon,
+        Offset(xPos, yPos),
+        42,
+        color.withOpacity(opacity),
+      );
     }
   }
 
-  void _drawIcon(Canvas canvas, IconData icon, Offset center, double size, Color color) {
+  void _drawIcon(
+    Canvas canvas,
+    IconData icon,
+    Offset center,
+    double size,
+    Color color,
+  ) {
     final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
     textPainter.text = TextSpan(
       text: String.fromCharCode(icon.codePoint),
@@ -3931,10 +5431,86 @@ class TransitBackgroundPainter extends CustomPainter {
       ),
     );
     textPainter.layout();
-    textPainter.paint(canvas, center - Offset(textPainter.width / 2, textPainter.height / 2));
+    textPainter.paint(
+      canvas,
+      center - Offset(textPainter.width / 2, textPainter.height / 2),
+    );
   }
 
   @override
-  bool shouldRepaint(covariant TransitBackgroundPainter oldDelegate) => 
+  bool shouldRepaint(covariant TransitBackgroundPainter oldDelegate) =>
       oldDelegate.color != color || oldDelegate.isDark != isDark;
+}
+
+class GalaxyDrawerPainter extends CustomPainter {
+  final bool isDark;
+  final Color primaryColor;
+
+  GalaxyDrawerPainter({required this.isDark, required this.primaryColor});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (!isDark) return;
+
+    final random = Random(42); // Fixed seed for consistent stars
+    
+    // 1. Draw solid space background (much darker charcoal tint)
+    final bgPaint = Paint()..color = const Color(0xFF020617).withOpacity(0.55);
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bgPaint);
+
+    // 2. Draw Stars (Static)
+    for (int i = 0; i < 110; i++) {
+      final x = random.nextDouble() * size.width;
+      final y = random.nextDouble() * size.height;
+      final radius = 0.2 + random.nextDouble() * 1.3;
+      final opacity = 0.1 + random.nextDouble() * 0.6;
+      
+      final starPaint = Paint()..color = Colors.white.withOpacity(opacity);
+      canvas.drawCircle(Offset(x, y), radius, starPaint);
+    }
+
+    // 3. Draw "Nebula" Glows (Subtle smears of color)
+    final nebulaPaint = Paint()
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 60);
+
+    for (int i = 0; i < 4; i++) {
+      final center = Offset(
+        random.nextDouble() * size.width,
+        random.nextDouble() * size.height,
+      );
+      // Mix primary color with a deep purple/blue for galaxy feel
+      nebulaPaint.color = i % 2 == 0 
+          ? primaryColor.withOpacity(0.06) 
+          : Colors.deepPurpleAccent.withOpacity(0.04);
+      
+      canvas.drawCircle(center, 120 + random.nextDouble() * 100, nebulaPaint);
+    }
+
+    // 4. Draw Shooting Stars (Comets)
+    for (int i = 0; i < 4; i++) {
+      final startX = random.nextDouble() * size.width;
+      final startY = random.nextDouble() * (size.height * 0.7); // Keep them mostly top/middle
+      final length = 60.0 + random.nextDouble() * 100.0;
+      
+      final cometPath = Path()
+        ..moveTo(startX, startY)
+        ..lineTo(startX + length, startY + length * 0.3);
+
+      final cometPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..strokeCap = ui.StrokeCap.round
+        ..shader = ui.Gradient.linear(
+          Offset(startX, startY),
+          Offset(startX + length, startY + length * 0.3),
+          [Colors.white.withOpacity(0.6), Colors.white.withOpacity(0)],
+          [0.0, 1.0],
+        );
+
+      canvas.drawPath(cometPath, cometPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant GalaxyDrawerPainter oldDelegate) => false;
 }

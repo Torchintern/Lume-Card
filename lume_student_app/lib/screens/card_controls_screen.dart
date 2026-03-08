@@ -60,7 +60,7 @@ class _CardControlsScreenState extends State<CardControlsScreen> {
         _posLimit = res["pos_limit"] ?? 0;
         _onlineEnabled = res["online_enabled"] == true;
         _onlineLimit = res["online_limit"] ?? 0;
-        _contactlessEnabled = res["tap_and_pay_enabled"] == true;
+        _contactlessEnabled = res["contactless_enabled"] == true;
         _contactlessLimit = res["contactless_limit"] ?? 0;
         _tokenisedEnabled = res["tokenised_enabled"] == true;
         _tokenisedLimit = res["tokenised_limit"] ?? 0;
@@ -96,14 +96,18 @@ class _CardControlsScreenState extends State<CardControlsScreen> {
     setState(() => _hasUnsavedChanges = changed);
   }
 
-  void _showLimitBottomSheet(String title, int currentLimit, bool isEnabled, Function(bool, int) onSave, {int maxLimit = 200000}) {
+  void _showLimitBottomSheet(String title, int currentLimit, bool isEnabled, Function(bool, int) onSave, {int maxLimit = 100000}) {
+    // If no current limit, pick a sensible default that doesn't exceed maxLimit
+    final int initialLimit = currentLimit == 0
+        ? (maxLimit >= 10000 ? 10000 : maxLimit)
+        : currentLimit.clamp(0, maxLimit);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _LimitSettingsSheet(
         title: title,
-        initialLimit: currentLimit == 0 ? (maxLimit >= 50000 ? 50000 : maxLimit) : currentLimit,
+        initialLimit: initialLimit,
         isDisabling: isEnabled,
         maxLimit: maxLimit,
         onSave: (enabled, limit) {
@@ -140,7 +144,7 @@ class _CardControlsScreenState extends State<CardControlsScreen> {
         "pos_limit": _posLimit,
         "online_enabled": _onlineEnabled,
         "online_limit": _onlineLimit,
-        "tap_and_pay_enabled": _contactlessEnabled,
+        "contactless_enabled": _contactlessEnabled,
         "contactless_limit": _contactlessLimit,
         "tokenised_enabled": _tokenisedEnabled,
         "tokenised_limit": _tokenisedLimit,
@@ -254,7 +258,7 @@ class _CardControlsScreenState extends State<CardControlsScreen> {
                                     title: "POS (In-store)",
                                     limit: _posLimit,
                                     value: _posEnabled,
-                                    onChanged: _isBlocked ? null : () => _showLimitBottomSheet("POS (In-store)", _posLimit, _posEnabled, (e, l) => setState(() { _posEnabled = e; _posLimit = l; })),
+                                    onChanged: _isBlocked ? null : () => _showLimitBottomSheet("POS (In-store)", _posLimit, _posEnabled, (e, l) => setState(() { _posEnabled = e; _posLimit = l; }), maxLimit: 100000),
                                   ),
                                   _buildControlTile(
                                     context,
@@ -262,7 +266,7 @@ class _CardControlsScreenState extends State<CardControlsScreen> {
                                     title: "Online/Ecom",
                                     limit: _onlineLimit,
                                     value: _onlineEnabled,
-                                    onChanged: _isBlocked ? null : () => _showLimitBottomSheet("Online/Ecom", _onlineLimit, _onlineEnabled, (e, l) => setState(() { _onlineEnabled = e; _onlineLimit = l; })),
+                                    onChanged: _isBlocked ? null : () => _showLimitBottomSheet("Online/Ecom", _onlineLimit, _onlineEnabled, (e, l) => setState(() { _onlineEnabled = e; _onlineLimit = l; }), maxLimit: 100000),
                                   ),
                                   _buildControlTile(
                                     context,
@@ -270,7 +274,7 @@ class _CardControlsScreenState extends State<CardControlsScreen> {
                                     title: "Contactless",
                                     limit: _contactlessLimit,
                                     value: _contactlessEnabled,
-                                    onChanged: _isBlocked ? null : () => _showLimitBottomSheet("Contactless", _contactlessLimit, _contactlessEnabled, (e, l) => setState(() { _contactlessEnabled = e; _contactlessLimit = l; })),
+                                    onChanged: _isBlocked ? null : () => _showLimitBottomSheet("Contactless", _contactlessLimit, _contactlessEnabled, (e, l) => setState(() { _contactlessEnabled = e; _contactlessLimit = l; }), maxLimit: 25000),
                                   ),
                                   _buildControlTile(
                                     context,
@@ -278,7 +282,7 @@ class _CardControlsScreenState extends State<CardControlsScreen> {
                                     title: "Tokenised",
                                     limit: _tokenisedLimit,
                                     value: _tokenisedEnabled,
-                                    onChanged: _isBlocked ? null : () => _showLimitBottomSheet("Tokenised", _tokenisedLimit, _tokenisedEnabled, (e, l) => setState(() { _tokenisedEnabled = e; _tokenisedLimit = l; })),
+                                    onChanged: _isBlocked ? null : () => _showLimitBottomSheet("Tokenised", _tokenisedLimit, _tokenisedEnabled, (e, l) => setState(() { _tokenisedEnabled = e; _tokenisedLimit = l; }), maxLimit: 100000),
                                   ),
                                   _buildControlTile(
                                     context,

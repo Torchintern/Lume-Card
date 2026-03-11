@@ -4,12 +4,14 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from config import Config
-from models import db, Student, LumeUser, ScholarApplication, KYCApplication, KYCSlot, LumeCard, Transaction
+from models import db, Student, LumeUser, ScholarApplication, KYCApplication, KYCSlot, LumeCard, Transaction, Mandate
 from otp import generate_otp, verify_otp
 import bcrypt
 from datetime import datetime, timedelta, time
 from flask import jsonify
 import random
+import threading
+import time as time_module
 
 def generate_card_number():
 
@@ -318,7 +320,7 @@ def get_profile():
         user.kyc_status = kyc.kyc_status
         
     else:
-        user.kyc_status = "Completed" if student.card_issued else "Pending"
+        user.kyc_status = "Completed" if (student and student.card_issued) else "Pending"
         
     # Auto issue card if KYC completed
     if student and user.kyc_status == "Completed":
@@ -655,6 +657,9 @@ def get_card_details():
         "expiry_year": card.expiry_year,
         "cvv": card.cvv,
         "balance": float(card.balance),
+        "ncmc_balance": float(card.ncmc_balance) if card.ncmc_balance is not None else 0.0,
+        "ncmc_unclaimed_balance": float(card.ncmc_unclaimed_balance) if card.ncmc_unclaimed_balance is not None else 0.0,
+        "ncmc_last_updated": card.ncmc_last_updated.isoformat() if card.ncmc_last_updated else None,
         "card_state": card.card_state,
         "is_pin_set": card.pin_hash is not None,
         "tap_and_pay_enabled": card.tap_and_pay_enabled,
@@ -1033,6 +1038,191 @@ def update_card_controls():
     print(f"[update-controls] contactless_enabled saved as: {card.contactless_enabled}")
     return jsonify({"success": True, "message": "Controls updated successfully"})
 
+# ================ ADD MONEY ====================
+@app.route("/card/add-money", methods=["POST"])
+@jwt_required()
+def add_money():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+
+    data = request.json
+    amount = float(data.get("amount", 0))
+    # Allow dynamic title if provided, otherwise fallback to "Wallet Topup"
+    title_input = data.get("title", "Wallet Topup")
+    # Capitalize status: "success" -> "Success", "pending" -> "Pending"
+    status_input = data.get("status", "success").capitalize() 
+
+    if amount <= 0:
+        return jsonify({"error": "Invalid amount"}), 400
+
+    # Create transaction
+    new_tx = Transaction(
+        user_id=user_id,
+        title=title_input,
+        transaction_type="topup",
+        amount=amount,
+        status=status_input,
+        category="Card"
+    )
+    db.session.add(new_tx)
+
+    # Update balance ONLY if success
+    if status_input == "Success":
+        card.balance = float(card.balance) + amount
+
+    db.session.commit()
+
+    return jsonify({
+        "success": True, 
+        "message": f"Topup {status_input}", 
+        "new_balance": float(card.balance)
+    })
+
+# ================ SIMULATE TRANSACTION (FOR DEVELOPMENT) ====================
+@app.route("/card/simulate-transaction", methods=["POST"])
+@jwt_required()
+def simulate_transaction():
+    user_id = int(get_jwt_identity())
+    data = request.json
+    
+    title = data.get("title")
+    amount = float(data.get("amount", 0))
+    tx_type = data.get("type", "paid") # paid, received, topup
+    category = data.get("category", "Card") # Card, Transit
+    
+    if not title or amount <= 0:
+        return jsonify({"error": "Invalid title or amount"}), 400
+        
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+        
+    # Create transaction
+    new_tx = Transaction(
+        user_id=user_id,
+        title=title,
+        transaction_type=tx_type,
+        amount=amount,
+        status="Success",
+        category=category
+    )
+    db.session.add(new_tx)
+    
+    # Update balance based on type
+    if tx_type == "paid":
+        if category == "Transit":
+            card.ncmc_balance = float(card.ncmc_balance or 0) - amount
+            card.ncmc_last_updated = datetime.now()
+        else:
+            card.balance = float(card.balance) - amount
+    elif tx_type == "received" or tx_type == "topup":
+        if category == "Transit":
+            if tx_type == "topup":
+                # NCMC Topups go to UNCLAIMED first
+                card.ncmc_unclaimed_balance = float(card.ncmc_unclaimed_balance or 0) + amount
+            else:
+                card.ncmc_balance = float(card.ncmc_balance or 0) + amount
+            card.ncmc_last_updated = datetime.now()
+        else:
+            card.balance = float(card.balance) + amount
+            
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "new_balance": float(card.balance),
+        "new_ncmc_balance": float(card.ncmc_balance or 0),
+        "new_ncmc_unclaimed_balance": float(card.ncmc_unclaimed_balance or 0)
+    })
+
+# ================= RECHARGE NCMC BALANCE ====================
+@app.route("/card/recharge-ncmc", methods=["POST"])
+@jwt_required()
+def recharge_ncmc():
+    user_id = int(get_jwt_identity())
+    data = request.get_json()
+    amount = float(data.get("amount", 0))
+    
+    if amount < 100 or amount > 2000:
+        return jsonify({"error": "Recharge amount must be between ₹100 and ₹2000"}), 400
+        
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+        
+    # Standard recharge adds to unclaimed
+    card.ncmc_unclaimed_balance = float(card.ncmc_unclaimed_balance or 0) + amount
+    card.ncmc_last_updated = datetime.now()
+    
+    # Create transaction record
+    new_tx = Transaction(
+        user_id=user_id,
+        title="Transit Recharge",
+        transaction_type="topup",
+        amount=amount,
+        status="Success",
+        category="Transit"
+    )
+    db.session.add(new_tx)
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "message": f"₹{amount:.2f} added to unclaimed balance",
+        "ncmc_unclaimed_balance": float(card.ncmc_unclaimed_balance)
+    })
+
+# ================= CLAIM NCMC BALANCE (OFFLINE SIMULATION) ====================
+@app.route("/card/claim-ncmc", methods=["POST"])
+@jwt_required()
+def claim_ncmc():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+        
+    # Syncing even if no unclaimed funds
+    unclaimed = float(card.ncmc_unclaimed_balance or 0)
+    
+    if unclaimed > 0:
+        # Move from unclaimed to offline chip balance
+        card.ncmc_balance = float(card.ncmc_balance or 0) + unclaimed
+        card.ncmc_unclaimed_balance = 0.0
+        msg = f"Successfully loaded ₹{unclaimed:.2f} to NCMC chip"
+    else:
+        msg = "Card already synced"
+        
+    # Always update timestamp on sync check
+    card.ncmc_last_updated = datetime.now()
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "message": msg,
+        "ncmc_balance": float(card.ncmc_balance),
+        "ncmc_unclaimed_balance": float(card.ncmc_unclaimed_balance),
+        "ncmc_last_updated": card.ncmc_last_updated.isoformat() if card.ncmc_last_updated else None
+    })
+
+# ================= UPDATE NCMC TIMESTAMP (When user checks balance) ====================
+@app.route("/card/update-ncmc-timestamp", methods=["POST"])
+@jwt_required()
+def update_ncmc_timestamp():
+    user_id = int(get_jwt_identity())
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    if not card:
+        return jsonify({"error": "Card not found"}), 404
+        
+    card.ncmc_last_updated = datetime.now()
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "ncmc_last_updated": card.ncmc_last_updated.isoformat()
+    })
+
 # ================ GET TRANSACTIONS ====================
 @app.route("/card/transactions", methods=["GET"])
 @jwt_required()
@@ -1052,11 +1242,191 @@ def get_transactions():
             "type": tx.transaction_type,
             "amount": float(tx.amount),
             "status": tx.status,
+            "category": tx.category or "Card",
             "date": date_str
         })
         
     return jsonify(result)
 
+# ===================== MANDATES =========================
+@app.route("/mandates", methods=["POST"])
+@jwt_required()
+def create_mandate():
+    user_id = int(get_jwt_identity())
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"error": "Invalid payload"}), 400
+
+    new_mandate = Mandate(
+        user_id=user_id,
+        mandate_type=data.get("mandate_type"),  # "Frequency" or "Threshold"
+        frequency=data.get("frequency"),        # "Weekly" or "Monthly"
+        day_of_week=data.get("day_of_week"),
+        date_of_month=data.get("date_of_month"),
+        amount=data.get("amount"),
+        threshold_amount=data.get("threshold_amount"),
+        status="Active"
+    )
+
+    db.session.add(new_mandate)
+    db.session.commit()
+
+    # Check if we should process immediately based on criteria
+    now = datetime.now()
+    should_run = False
+    
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+
+    if new_mandate.mandate_type == "Frequency":
+        if new_mandate.frequency == "Weekly" and new_mandate.day_of_week == now.strftime("%A"):
+            should_run = True
+        elif new_mandate.frequency == "Monthly" and new_mandate.date_of_month == now.day:
+            should_run = True
+    elif new_mandate.mandate_type == "Threshold":
+        if card and float(card.balance or 0) < float(new_mandate.threshold_amount or 0):
+            should_run = True
+
+    if should_run:
+        process_single_mandate(new_mandate)
+
+    # Fetch updated card balance to return to frontend
+    card = LumeCard.query.filter_by(user_id=user_id).first()
+    new_balance = float(card.balance) if card else 0.0
+
+    return jsonify({
+        "success": True,
+        "message": "Mandate set successfully",
+        "mandate_id": new_mandate.id,
+        "new_balance": new_balance
+    })
+
+
+@app.route("/mandates", methods=["GET"])
+@jwt_required()
+def get_mandates():
+    user_id = int(get_jwt_identity())
+    mandates = Mandate.query.filter_by(user_id=user_id).order_by(Mandate.created_at.desc()).all()
+
+    result = []
+    for m in mandates:
+        # Display frequency or threshold representation
+        if m.mandate_type == "Frequency":
+            if m.frequency == "Weekly":
+                details = f"Weekly on {m.day_of_week}"
+            else:
+                details = f"Monthly on date {m.date_of_month}"
+        else:
+            details = f"Threshold below ₹{float(m.threshold_amount or 0)}"
+
+        result.append({
+            "id": m.id,
+            "mandate_type": m.mandate_type,
+            "details": details,
+            "frequency": m.frequency,
+            "amount": float(m.amount) if m.amount else 0.0,
+            "status": m.status,
+            "created_at": m.created_at.isoformat() if m.created_at else None
+        })
+
+    return jsonify({"mandates": result})
+
+
+@app.route("/mandates/<int:mandate_id>/status", methods=["PATCH"])
+@jwt_required()
+def update_mandate_status(mandate_id):
+    user_id = int(get_jwt_identity())
+    data = request.get_json()
+    new_status = data.get("status")
+
+    if new_status not in ["Active", "Paused", "Inactive"]:
+        return jsonify({"error": "Invalid status"}), 400
+
+    mandate = Mandate.query.filter_by(id=mandate_id, user_id=user_id).first()
+    if not mandate:
+        return jsonify({"error": "Mandate not found"}), 404
+
+    mandate.status = new_status
+    db.session.commit()
+
+    return jsonify({"success": True, "message": f"Mandate status updated to {new_status}"})
+
+# ===================== MANDATE HELPER =========================
+def process_single_mandate(mandate):
+    card = LumeCard.query.filter_by(user_id=mandate.user_id).first()
+    if not card:
+        return False
+    
+    amount = float(mandate.amount or 0)
+    if amount <= 0:
+        return False
+        
+    # Create transaction
+    new_tx = Transaction(
+        user_id=mandate.user_id,
+        title=f"Auto Topup ({mandate.frequency or 'Threshold'})",
+        transaction_type="topup",
+        amount=amount,
+        status="Success"
+    )
+    db.session.add(new_tx)
+    
+    # Update balance
+    card.balance = float(card.balance or 0) + amount
+    
+    # Update mandate last processed time
+    mandate.last_processed_at = datetime.now()
+    db.session.commit()
+    print(f"Processed mandate {mandate.id} for user {mandate.user_id}")
+    return True
+
+def check_and_run_mandates():
+    with app.app_context():
+        while True:
+            try:
+                now = datetime.now()
+                # 1. Frequency Mandates (Weekly/Monthly)
+                active_freq_mandates = Mandate.query.filter_by(mandate_type="Frequency", status="Active").all()
+                for m in active_freq_mandates:
+                    # Check if already processed today
+                    if m.last_processed_at and m.last_processed_at.date() == now.date():
+                        continue
+                    
+                    should_run = False
+                    if m.frequency == "Weekly":
+                        current_day = now.strftime("%A")
+                        if m.day_of_week == current_day:
+                            should_run = True
+                    elif m.frequency == "Monthly":
+                        current_date = now.day
+                        if m.date_of_month == current_date:
+                            should_run = True
+                    
+                    if should_run:
+                        process_single_mandate(m)
+
+                # 2. Threshold Mandates
+                active_threshold_mandates = Mandate.query.filter_by(mandate_type="Threshold", status="Active").all()
+                for m in active_threshold_mandates:
+                    card = LumeCard.query.filter_by(user_id=m.user_id).first()
+                    if card and float(card.balance or 0) < float(m.threshold_amount or 0):
+                        # For threshold, we might want to prevent rapid repeated topups
+                        # Check if processed in the last hour
+                        if m.last_processed_at and (now - m.last_processed_at) < timedelta(minutes=5):
+                            continue
+                        process_single_mandate(m)
+                
+            except Exception as e:
+                print(f"Error in mandate scheduler: {e}")
+            
+            # Sleep for 15 seconds before next check
+            time_module.sleep(15)
+
+# Start background scheduler
+scheduler_thread = threading.Thread(target=check_and_run_mandates, daemon=True)
+scheduler_thread.start()
+
 # ============ RUN SERVER =======================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+

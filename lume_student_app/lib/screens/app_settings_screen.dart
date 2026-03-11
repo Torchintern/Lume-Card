@@ -69,125 +69,161 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       backgroundColor: colorScheme.surface,
       body: Consumer<SettingsProvider>(
         builder: (context, settings, child) {
-          return Column(
-            children: [
-              // Fixed Premium Header
-              Container(
-                height: size.height * 0.25,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [colorScheme.primary, colorScheme.secondary],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    SafeArea(
-                      child: Stack(
-                        children: [
-                          Positioned(
-                            top: 10,
-                            left: 12,
-                            child: IconButton(
-                              icon: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.2),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.5),
-                                    width: 1.5,
-                                  ),
-                                ),
-                                child: const Icon(
-                                  Icons.arrow_back_rounded,
-                                  color: Colors.white,
-                                  size: 20,
-                                ),
-                              ),
-                              onPressed: () => Navigator.pop(context),
-                            ),
-                          ),
-                          const Positioned(
-                            bottom: 25,
-                            left: 20,
-                            child: Text(
-                              "App Settings",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 30,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                        ],
+          return CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              // Dynamic Premium Header
+              SliverAppBar(
+                expandedHeight: size.height * 0.25,
+                pinned: true,
+                stretch: true,
+                backgroundColor: colorScheme.primary,
+                elevation: 0,
+                leadingWidth: 70,
+                centerTitle: true,
+                leading: Center(
+                  child: IconButton(
+                    icon: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.5),
+                          width: 1.5,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.arrow_back_rounded,
+                        color: Colors.white,
+                        size: 20,
                       ),
                     ),
-                  ],
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ),
+                flexibleSpace: FlexibleSpaceBar(
+                  centerTitle: true,
+                  expandedTitleScale: 1.0,
+                  titlePadding: EdgeInsets.zero,
+                  title: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final double top = constraints.biggest.height;
+                      final double expandedHeight = size.height * 0.25;
+                      final double collapsedHeight =
+                          MediaQuery.of(context).padding.top + kToolbarHeight;
+                      final double delta = expandedHeight - collapsedHeight;
+                      final double progress =
+                          ((top - collapsedHeight) / delta).clamp(0.0, 1.0);
+
+                      final double fontSize = 18 + (14 * progress);
+
+                      return Container(
+                        padding: EdgeInsets.only(
+                          left: 25 * (1 - progress) + (20 * progress),
+                          bottom: 25 * progress,
+                        ),
+                        alignment: Alignment.lerp(
+                          Alignment.center,
+                          Alignment.bottomLeft,
+                          progress,
+                        ),
+                        child: Text(
+                          "App Settings",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: fontSize,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -1 * progress,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  background: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [colorScheme.primary, colorScheme.secondary],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Positioned(
+                          bottom: 20,
+                          right: 20,
+                          child: Icon(
+                            Icons.tune_rounded,
+                            size: 100,
+                            color: Colors.white.withValues(alpha: 0.1),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                bottom: PreferredSize(
+                  preferredSize: const Size.fromHeight(20),
+                  child: Container(
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surface,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(30),
+                        topRight: Radius.circular(30),
+                      ),
+                    ),
+                  ),
                 ),
               ),
 
-              // Content Area with rounded top
-              Expanded(
-                child: Container(
-                  width: double.infinity,
-                  transform: Matrix4.translationValues(0, -30, 0),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surface,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(30),
-                      topRight: Radius.circular(30),
-                    ),
-                  ),
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        children: [
-                          _sectionTitle(context, "GENERAL"),
-                          _switchTile(
-                            icon: Icons.notifications_rounded,
-                            color: Colors.orange,
-                            title: "Notifications",
-                            subtitle: "Manage push notifications",
-                            value: settings.notificationsEnabled,
-                            onChanged: (v) => settings.setNotifications(v),
-                            context: context,
-                          ),
-                          _selectorTile(
-                            icon: Icons.palette_rounded,
-                            color: Colors.purple,
-                            title: "Theme",
-                            subtitle: settings.themeModeString,
-                            onTap: () => _showThemePicker(context, settings),
-                            context: context,
-                          ),
-                          _selectorTile(
-                            icon: Icons.language_rounded,
-                            color: Colors.blue,
-                            title: "Language",
-                            subtitle: settings.language,
-                            onTap: () => _showLanguagePicker(context, settings),
-                            context: context,
-                          ),
-                          const SizedBox(height: 24),
-                          _sectionTitle(context, "SECURITY"),
-                          _switchTile(
-                            icon: Icons.lock_rounded,
-                            color: Colors.green,
-                            title: "Biometric",
-                            subtitle: "Login Using Biometric to open app",
-                            value: settings.appLockEnabled,
-                            onChanged: (v) => _handleAppLockToggle(v, settings),
-                            context: context,
-                          ),
-                          const SizedBox(height: 40),
-                        ],
+              // Content Area
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                  child: Column(
+                    children: [
+                      _sectionTitle(context, "GENERAL"),
+                      _switchTile(
+                        icon: Icons.notifications_rounded,
+                        color: Colors.orange,
+                        title: "Notifications",
+                        subtitle: "Manage push notifications",
+                        value: settings.notificationsEnabled,
+                        onChanged: (v) => settings.setNotifications(v),
+                        context: context,
                       ),
-                    ),
+                      _selectorTile(
+                        icon: Icons.palette_rounded,
+                        color: Colors.purple,
+                        title: "Theme",
+                        subtitle: settings.themeModeString,
+                        onTap: () => _showThemePicker(context, settings),
+                        context: context,
+                      ),
+                      _selectorTile(
+                        icon: Icons.language_rounded,
+                        color: Colors.blue,
+                        title: "Language",
+                        subtitle: settings.language,
+                        onTap: () => _showLanguagePicker(context, settings),
+                        context: context,
+                      ),
+                      const SizedBox(height: 24),
+                      _sectionTitle(context, "SECURITY"),
+                      _switchTile(
+                        icon: Icons.fingerprint_rounded,
+                        color: Colors.blue,
+                        title: "Biometric Lock",
+                        subtitle: "Unlock app with your fingerprint",
+                        value: settings.appLockEnabled,
+                        onChanged: (v) => _handleAppLockToggle(v, settings),
+                        context: context,
+                      ),
+                      const SizedBox(height: 40),
+                    ],
                   ),
                 ),
               ),
@@ -205,13 +241,14 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     return Align(
       alignment: Alignment.centerLeft,
       child: Padding(
-        padding: const EdgeInsets.only(bottom: 12, top: 10),
+        padding: const EdgeInsets.only(bottom: 16, top: 20),
         child: Text(
           text,
           style: TextStyle(
+            fontSize: 16,
             fontWeight: FontWeight.w800,
-            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-            letterSpacing: 1.1,
+            color: colorScheme.onSurface,
+            letterSpacing: 0.5,
           ),
         ),
       ),
@@ -264,29 +301,28 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   Widget _card(IconData icon, Color color, String title, String subtitle, Widget trailing, {VoidCallback? onTap, required BuildContext context}) {
     final colorScheme = Theme.of(context).colorScheme;
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark ? const Color(0xFF1E293B) : Colors.white;
-    final shadowColor = isDark ? Colors.black.withValues(alpha: 0.4) : color.withValues(alpha: 0.10);
-    final borderColor = color.withValues(alpha: isDark ? 0.3 : 0.15);
-    final iconBgColor = color.withValues(alpha: isDark ? 0.2 : 0.15);
-    final titleColor = colorScheme.onSurface;
-    final subtitleColor = colorScheme.onSurfaceVariant;
-
+    
+    // Exact dashboard UI matching
+    final cardColor = colorScheme.surface;
+    final borderColor = colorScheme.outlineVariant.withOpacity(isDark ? 0.5 : 0.2);
+    final iconBgColor = color.withOpacity(isDark ? 0.2 : 0.1);
+    
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 16),
       child: InkWell(
-        borderRadius: BorderRadius.circular(28),
+        borderRadius: BorderRadius.circular(24),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: cardColor,
-            borderRadius: BorderRadius.circular(28),
+            borderRadius: BorderRadius.circular(24),
             border: Border.all(color: borderColor),
             boxShadow: [
               BoxShadow(
-                color: shadowColor,
-                blurRadius: 18,
-                offset: const Offset(0, 8),
+                color: Colors.black.withOpacity(isDark ? 0.3 : 0.03),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
               )
             ],
           ),
@@ -296,18 +332,32 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: iconBgColor,
-                  borderRadius: BorderRadius.circular(16),
+                  shape: BoxShape.circle,
                 ),
-                child: Icon(icon, color: color),
+                child: Icon(icon, color: color, size: 22),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: TextStyle(fontWeight: FontWeight.w700, color: titleColor)),
-                    const SizedBox(height: 3),
-                    Text(subtitle, style: TextStyle(color: subtitleColor)),
+                    Text(
+                      title, 
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800, 
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle, 
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant.withOpacity(0.7),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                   ],
                 ),
               ),

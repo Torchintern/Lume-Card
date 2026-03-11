@@ -13,31 +13,115 @@ class AboutLumeScreen extends StatelessWidget {
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
         slivers: [
+          // Dynamic Premium Header
           SliverAppBar(
-            expandedHeight: size.height * 0.25,
+            expandedHeight: size.height * 0.28,
             pinned: true,
-            elevation: 0,
+            stretch: true,
             backgroundColor: colorScheme.primary,
-            leading: IconButton(
-              icon: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.5),
-                    width: 1.5,
+            elevation: 0,
+            leadingWidth: 70,
+            centerTitle: true,
+            leading: Center(
+              child: IconButton(
+                icon: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.5),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.arrow_back_rounded,
+                    color: Colors.white,
+                    size: 20,
                   ),
                 ),
-                child: const Icon(
-                  Icons.arrow_back_rounded,
-                  color: Colors.white,
-                  size: 20,
-                ),
+                onPressed: () => Navigator.pop(context),
               ),
-              onPressed: () => Navigator.pop(context),
             ),
             flexibleSpace: FlexibleSpaceBar(
+              centerTitle: true,
+              expandedTitleScale: 1.0,
+              titlePadding: EdgeInsets.zero,
+              title: LayoutBuilder(
+                builder: (context, constraints) {
+                  final double top = constraints.biggest.height;
+                  final double expandedHeight = size.height * 0.28;
+                  final double collapsedHeight =
+                      MediaQuery.of(context).padding.top + kToolbarHeight;
+                  final double delta = expandedHeight - collapsedHeight;
+                  final double progress =
+                      ((top - collapsedHeight) / delta).clamp(0.0, 1.0);
+
+                  final double fontSize = 18 + (12 * progress);
+
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // Flying Title
+                      Container(
+                        padding: EdgeInsets.only(
+                          left: 25 * (1 - progress) + (20 * progress),
+                          bottom: 25 * progress,
+                        ),
+                        alignment: Alignment.lerp(
+                          Alignment.center,
+                          Alignment.bottomLeft,
+                          progress,
+                        ),
+                        child: Text(
+                          "About Lume",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: fontSize,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -1 * progress,
+                          ),
+                        ),
+                      ),
+                      
+                      // Flying & Scaling Logo to Top Right
+                      Positioned(
+                        right: 20,
+                        top: MediaQuery.of(context).padding.top + 10 + (progress * (expandedHeight * 0.2)),
+                        child: Opacity(
+                          opacity: 0.5 + (0.5 * progress),
+                          child: Transform.scale(
+                            scale: 0.45 + (0.55 * progress),
+                            alignment: Alignment.centerRight,
+                            child: Container(
+                              height: 100,
+                              width: 100,
+                              margin: EdgeInsets.only(
+                                right: 5 * (1 - progress),
+                                top: 0,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.3),
+                                  width: 2.5,
+                                ),
+                              ),
+                              child: ClipOval(
+                                child: Image.asset(
+                                  "assets/logo.png",
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
               background: Container(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -46,45 +130,24 @@ class AboutLumeScreen extends StatelessWidget {
                     end: Alignment.bottomRight,
                   ),
                 ),
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const SizedBox(height: 40),
-                      Container(
-                        height: 90,
-                        width: 90,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.3),
-                            width: 2,
-                          ),
-                        ),
-                        child: ClipOval(
-                          child: Image.asset(
-                            "assets/logo.png",
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        "Lume",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ],
+              ),
+            ),
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(20),
+              child: Container(
+                height: 20,
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(30),
+                    topRight: Radius.circular(30),
                   ),
                 ),
               ),
             ),
           ),
+
+          // Content Area
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(24.0),
@@ -106,7 +169,7 @@ class AboutLumeScreen extends StatelessWidget {
                     context,
                     Icons.info_outline_rounded,
                     "Version",
-                    "1.0.0 (Build 1024)",
+                    "1.1.0 (Premium Build)",
                   ),
                   _buildInfoTile(
                     context,

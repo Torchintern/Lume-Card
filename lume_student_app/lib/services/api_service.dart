@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const baseUrl = "http://192.168.0.4:5000";
+  static const baseUrl = "http://192.168.1.4:5000";
 
   // SEND OTP
   static Future sendOtp(String phone) async {
@@ -368,5 +368,96 @@ class ApiService {
       return jsonDecode(res.body);
     }
     return [];
+  }
+
+  // TEST FUNCTION TO RECHARGE NCMC (Simulate App Side Recharge)
+  static Future rechargeNcmc(String token, double amount) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/recharge-ncmc"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+      body: jsonEncode({"amount": amount}),
+    );
+    return jsonDecode(res.body);
+  }
+
+  // SYNC/CLAIM NCMC (Simulate Offline Station)
+  static Future claimNcmc(String token) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/claim-ncmc"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+    );
+    return jsonDecode(res.body);
+  }
+
+  // UPDATE NCMC TIMESTAMP
+  static Future updateNcmcTimestamp(String token) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/update-ncmc-timestamp"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+    );
+    return jsonDecode(res.body);
+  }
+
+  // ADD MONEY
+  static Future addMoney(String token, double amount, String status) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/card/add-money"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+      body: jsonEncode({"amount": amount, "status": status}),
+    );
+    return jsonDecode(res.body);
+  }
+
+  // GET MANDATES
+  static Future<Map<String, dynamic>> getMandates(String token) async {
+    final res = await http.get(
+      Uri.parse("$baseUrl/mandates"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+    );
+    if (res.statusCode == 200) {
+      return jsonDecode(res.body);
+    }
+    return {"mandates": []};
+  }
+
+  // CREATE MANDATE
+  static Future createMandate(String token, Map<String, dynamic> data) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/mandates"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+      body: jsonEncode(data),
+    );
+    return jsonDecode(res.body);
+  }
+
+  // UPDATE MANDATE STATUS
+  static Future updateMandateStatus(String token, int mandateId, String newStatus) async {
+    final res = await http.patch(
+      Uri.parse("$baseUrl/mandates/$mandateId/status"),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token"
+      },
+      body: jsonEncode({"status": newStatus}),
+    );
+    return jsonDecode(res.body);
   }
 }

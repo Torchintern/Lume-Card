@@ -10,181 +10,165 @@ class HelpSupportScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      body: Column(
-        children: [
-          // Fixed Premium Header
-          Container(
-            height: size.height * 0.25,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [colorScheme.primary, colorScheme.secondary],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                SafeArea(
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        top: 10,
-                        left: 12,
-                        child: IconButton(
-                          icon: Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.2),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.5),
-                                width: 1.5,
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.arrow_back_rounded,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                          onPressed: () => Navigator.pop(context),
-                        ),
-                      ),
-                      const Positioned(
-                        bottom: 25,
-                        left: 20,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              "Help & Support",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 30,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            SizedBox(height: 6),
-                            Text(
-                              "Talk with Lume Assistant",
-                              style: TextStyle(color: Colors.white70),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+      body: CustomScrollView(
+        physics: const BouncingScrollPhysics(),
+        slivers: [
+          // Dynamic Premium Header
+          SliverAppBar(
+            expandedHeight: size.height * 0.25,
+            pinned: true,
+            stretch: true,
+            backgroundColor: colorScheme.primary,
+            elevation: 0,
+            leadingWidth: 70,
+            centerTitle: true,
+            leading: Center(
+              child: IconButton(
+                icon: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.5),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.arrow_back_rounded,
+                    color: Colors.white,
+                    size: 20,
                   ),
                 ),
-              ],
-            ),
-          ),
-
-          // Content Area with rounded top
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              transform: Matrix4.translationValues(0, -30, 0),
-              decoration: BoxDecoration(
-                color: colorScheme.surface,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(30),
-                  topRight: Radius.circular(30),
-                ),
+                onPressed: () => Navigator.pop(context),
               ),
-              child: SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    children: [
-                      /// Welcome Card
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: colorScheme.surface,
-                          borderRadius: BorderRadius.circular(28),
-                          border: Border.all(
-                            color: colorScheme.primary.withOpacity(0.15),
-                            width: 1.4,
+            ),
+            flexibleSpace: FlexibleSpaceBar(
+              centerTitle: true,
+              expandedTitleScale: 1.0,
+              titlePadding: EdgeInsets.zero,
+              title: LayoutBuilder(
+                builder: (context, constraints) {
+                  final double top = constraints.biggest.height;
+                  final double expandedHeight = size.height * 0.25;
+                  final double collapsedHeight =
+                      MediaQuery.of(context).padding.top + kToolbarHeight;
+                  final double delta = expandedHeight - collapsedHeight;
+                  final double progress =
+                      ((top - collapsedHeight) / delta).clamp(0.0, 1.0);
+
+                  final double fontSize = 18 + (12 * progress);
+
+                  return Container(
+                    padding: EdgeInsets.only(
+                      left: 25 * (1 - progress) + (20 * progress),
+                      bottom: 25 * progress,
+                    ),
+                    alignment: Alignment.lerp(
+                      Alignment.center,
+                      Alignment.bottomLeft,
+                      progress,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: progress > 0.5
+                          ? CrossAxisAlignment.start
+                          : CrossAxisAlignment.center,
+                      children: [
+                        Text(
+                          "Help & Support",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: fontSize,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.5 * progress,
                           ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: colorScheme.primary.withOpacity(0.10),
-                              blurRadius: 20,
-                              offset: const Offset(0, 8),
-                            )
-                          ],
                         ),
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: colorScheme.primary.withOpacity(0.15),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Icon(Icons.smart_toy_rounded,
-                                  color: colorScheme.primary, size: 28),
-                            ),
-                            const SizedBox(width: 16),
-                            const Expanded(
+                        if (progress > 0.5)
+                          Opacity(
+                            opacity: ((progress - 0.5) * 2).clamp(0.0, 1.0),
+                            child: const Padding(
+                              padding: EdgeInsets.only(top: 6),
                               child: Text(
-                                "Hi 👋\nAsk anything about your LUME, ID, payments or issues.",
+                                "Talk with Lume Assistant",
                                 style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.4,
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.normal,
                                 ),
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+              background: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [colorScheme.primary, colorScheme.secondary],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Positioned(
+                      bottom: 20,
+                      right: 20,
+                      child: Icon(
+                        Icons.support_agent_rounded,
+                        size: 100,
+                        color: Colors.white.withValues(alpha: 0.1),
                       ),
-
-                      const SizedBox(height: 30),
-
-                      /// Chatbot Placeholder Area
-                      Container(
-                        height: 380,
-                        width: double.infinity,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: colorScheme.onSurface.withOpacity(0.02),
-                          borderRadius: BorderRadius.circular(28),
-                          border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
-                        ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.chat_bubble_outline_rounded,
-                                size: 60, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
-                            const SizedBox(height: 16),
-                            Text(
-                              "Chatbot will appear here",
-                              style: TextStyle(
-                                color: colorScheme.onSurface,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              "You will connect NITA here later",
-                              style: TextStyle(
-                                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 40),
-                    ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(20),
+              child: Container(
+                height: 20,
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(30),
+                    topRight: Radius.circular(30),
                   ),
                 ),
               ),
+            ),
+          ),
+
+          // Content Area
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(height: 100),
+                      Icon(
+                        Icons.construction_rounded,
+                        size: 64,
+                        color: colorScheme.primary.withOpacity(0.2),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        "Chat bot under development",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
             ),
           ),
         ],

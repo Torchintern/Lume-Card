@@ -13,6 +13,7 @@ import 'screens/dashboard_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/scholar_screen.dart';
 import 'screens/help_support_screen.dart';
+import 'screens/ncmc_details_screen.dart';
 import 'screens/app_settings_screen.dart';
 import 'screens/notification_screen.dart';
 import 'screens/about/terms_conditions_screen.dart';
@@ -24,6 +25,9 @@ import 'screens/card_center_screen.dart';
 import 'screens/card_benefits_screen.dart';
 import 'screens/card_controls_screen.dart';
 import 'screens/card_reissue_screen.dart';
+import 'screens/add_money_screen.dart';
+import 'screens/set_mandate_screen.dart';
+import 'screens/mandates_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -175,16 +179,23 @@ class LumeApp extends StatelessWidget {
             "/scholar": (_) => const ScholarScreen(),
             "/help-support": (context) => const HelpSupportScreen(),
             '/app-settings': (context) => const AppSettingsScreen(),
+            '/ncmc-details': (context) => const NcmcDetailsScreen(),
             '/terms': (context) => const TermsConditionsScreen(),
             '/privacy': (context) => const PrivacyPolicyScreen(),
             '/about': (context) => const AboutLumeScreen(),
             '/notifications': (context) => const NotificationScreen(),
             '/kyc': (context) => const KycFormScreen(),
-            "/transactions": (context) => const TransactionsScreen(),
+            "/transactions": (context) {
+              final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+              return TransactionsScreen(initialTab: args?['initialTab'] ?? 0);
+            },
             "/card-center": (context) => const CardCenterScreen(),
             "/card-benefits": (context) => const CardBenefitsScreen(),
             "/card-controls": (context) => const CardControlsScreen(),
             "/card-reissue": (context) => const CardReissueScreen(),
+            "/add-money": (context) => const AddMoneyScreen(),
+            "/set-mandate": (context) => const SetMandateScreen(),
+            "/mandates": (context) => const MandatesScreen(),
           },
         );
       },

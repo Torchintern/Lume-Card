@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'dart:ui' as ui;
+import 'package:nfc_manager/nfc_manager.dart';
 import '../services/api_service.dart';
 import '../utils/campus_app_picker.dart';
 
@@ -41,6 +42,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     with TickerProviderStateMixin {
   late AnimationController _animationController;
   late AnimationController _flipController;
+  late AnimationController _pulseController;
   late Animation<double> _flipAnimation;
   late TabController _tabController;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -75,7 +77,14 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isCardFreezed = false;
   String _orderStatus = "NOT_REQUESTED";
   double _cardBalance = 0.0;
+  double _ncmcBalance = 0.0;
+  double _ncmcUnclaimedBalance = 0.0;
+  String? _ncmcLastUpdated;
   bool _isBalanceVisible = false;
+  bool _isNcmcBalanceVisible = false;
+  bool _isNcmcPrimary = false; // New: Tracks which balance is in front
+  bool _hasActiveMandates = false; // Tracks if active mandates exist for the UI
+  bool _isNfcAvailable = false; // Tracks device NFC capability
 
   // Transactions
   List<dynamic> _recentTransactions = [];
@@ -86,6 +95,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   IconData _weatherIcon = Icons.cloud_queue_rounded;
   WeatherCondition _currentCondition = WeatherCondition.cloudy;
   Timer? _clockTimer;
+  Timer? _refreshTimer;
 
   final Map<WeatherCondition, WeatherTheme> _weatherThemes = {
     WeatherCondition.sunny: const WeatherTheme(
@@ -132,10 +142,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       duration: const Duration(milliseconds: 1000),
     );
     _tabController = TabController(length: 4, vsync: this);
-    // Remove setState listener to prevent full-screen rebuilds on every tab switch step
-    // _tabController.addListener(() {
-    //   if (mounted) setState(() {});
-    // });
+    _tabController.addListener(_handleTabSelection);
 
     _flipController = AnimationController(
       vsync: this,
@@ -145,17 +152,128 @@ class _DashboardScreenState extends State<DashboardScreen>
       CurvedAnimation(parent: _flipController, curve: Curves.easeInOut),
     );
 
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: true);
+
     _animationController.forward();
     _loadUserProfile();
     _fetchWeather();
     _startClock();
+    _startAutoRefresh();
+    _checkNfcAvailability();
     CampusAppPicker.preload();
+  }
+
+  Future<void> _checkNfcAvailability() async {
+    try {
+      bool isAvailable = await NfcManager.instance.isAvailable();
+      if (mounted) {
+        setState(() {
+          _isNfcAvailable = isAvailable;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isNfcAvailable = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _claimNcmcViaNfc() async {
+    if (!_isNfcAvailable) return;
+
+    // Show Tap Instruction
+    showModalBottomSheet(
+      context: context,
+      isDismissible: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: 350,
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(10))),
+            const SizedBox(height: 24),
+            const Icon(Icons.contactless_rounded, size: 64, color: Colors.blueAccent),
+            const SizedBox(height: 24),
+            const Text("Ready to Scan", style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 12),
+            const Text("Hold your Lume Card near the top back of your device to claim your transit balance.", textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: Colors.grey)),
+            const Spacer(),
+            SizedBox(
+              width: double.infinity,
+              height: 56,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade200, foregroundColor: Colors.black87, elevation: 0),
+                child: const Text("CANCEL"),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    // Simulation of NFC Scan and Claim
+    // In a real app, this would use NfcManager.instance.startSession()
+    // For this simulation/mock, we wait then claim.
+    await Future.delayed(const Duration(seconds: 3));
+    
+    if (mounted) {
+      Navigator.pop(context); // Close scan sheet
+      
+      // Execute the backend claim synchronously
+      try {
+        final res = await ApiService.claimNcmc(_authToken!);
+        if (res["success"] == true) {
+          HapticFeedback.heavyImpact();
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Balance sync successful! Card updated."), backgroundColor: Colors.green));
+          _loadUserProfile();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res["error"] ?? "Failed to sync card"), backgroundColor: Colors.red));
+        }
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+      }
+    }
   }
 
   void _startClock() {
     _clockTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
       if (mounted) setState(() {});
     });
+  }
+
+  void _startAutoRefresh() {
+    // Refresh mandate/wallet data every 30 seconds to catch automated updates
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      if (mounted && (_tabController.index == 1 || _tabController.index == 3)) { // Specifically refresh more often on Card and Transit tab
+        _loadUserProfile();
+      } else if (mounted && timer.tick % 4 == 0) { // Every 2 minutes on other tabs
+        _loadUserProfile();
+      }
+    });
+  }
+
+  void _handleTabSelection() {
+    if (mounted) {
+      // Re-trigger build to update header title etc.
+      setState(() {});
+      
+      // Auto-refresh data when landing on Card or Transit Tab
+      if (_tabController.index == 1 || _tabController.index == 3) {
+        _loadUserProfile();
+      }
+    }
   }
 
   Future<void> _loadUserProfile() async {
@@ -257,6 +375,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 _isCardFreezed = cardRes["is_freezed"] == true;
                 _orderStatus = cardRes["order_status"] ?? "NOT_REQUESTED";
                 _cardBalance = (cardRes["balance"] ?? 0.0).toDouble();
+                _ncmcBalance = (cardRes["ncmc_balance"] ?? cardRes["transit_balance"] ?? 0.0).toDouble();
+                _ncmcUnclaimedBalance = (cardRes["ncmc_unclaimed_balance"] ?? 0.0).toDouble();
+                _ncmcLastUpdated = cardRes["ncmc_last_updated"];
               });
             }
           } catch (e) {
@@ -288,8 +409,22 @@ class _DashboardScreenState extends State<DashboardScreen>
             await prefs.setString("user_profile_image", _profileImageUrl!);
 
           final txs = await ApiService.getTransactions(token);
+          final mandateRes = await ApiService.getMandates(token);
+          
           if (mounted) {
             _recentTransactions = txs;
+            bool hasActive = false;
+            final mandatesList = mandateRes["mandates"] as List? ?? [];
+            for (var mandate in mandatesList) {
+              final status = mandate["status"]?.toString().toUpperCase() ?? "";
+              if (status == "ACTIVE" || status == "PAUSED") {
+                hasActive = true;
+                break;
+              }
+            }
+            // also setting true if there are mandates even if paused, 
+            // the button should be there to manage them if they exist at all.
+            _hasActiveMandates = hasActive;
           }
         }
       }
@@ -297,6 +432,98 @@ class _DashboardScreenState extends State<DashboardScreen>
       debugPrint("Error loading profile: $e");
     }
     if (mounted) setState(() {});
+  }
+
+  Future<void> _showNcmcRechargeDialog() async {
+    final TextEditingController amountController = TextEditingController();
+    final GlobalKey<FormState> formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Transit Recharge"),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text("Enter amount to recharge your transit card (Min: ₹100, Max: ₹2000)"),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: "Amount",
+                  prefixText: "₹ ",
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) return "Enter amount";
+                  final amt = double.tryParse(value);
+                  if (amt == null) return "Invalid amount";
+                  if (amt < 100) return "Min recharge ₹100";
+                  if (amt > 2000) return "Max recharge ₹2000";
+                  return null;
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("CANCEL"),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (formKey.currentState!.validate()) {
+                final amt = double.parse(amountController.text);
+                Navigator.pop(context); // Close input dialog
+                
+                // Show Loading
+                showDialog(
+                  context: this.context,
+                  barrierDismissible: false,
+                  builder: (context) => const Center(child: CircularProgressIndicator()),
+                );
+
+                try {
+                  final res = await ApiService.rechargeNcmc(_authToken!, amt);
+                  if (mounted) Navigator.pop(this.context); // Close loading
+
+                  if (res["success"] == true) {
+                    HapticFeedback.mediumImpact();
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      SnackBar(
+                        content: Text("₹$amt added to unclaimed balance!"),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                    _loadUserProfile();
+                  } else {
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      SnackBar(
+                        content: Text(res["error"] ?? "Failed to recharge"),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) Navigator.pop(this.context);
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    SnackBar(
+                      content: Text("Error: $e"),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text("RECHARGE"),
+          ),
+        ],
+      ),
+    );
   }
 
   bool _isSlotTimeReached() {
@@ -353,10 +580,13 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   @override
   void dispose() {
+    _clockTimer?.cancel();
+    _refreshTimer?.cancel();
+    _tabController.removeListener(_handleTabSelection);
     _animationController.dispose();
     _flipController.dispose();
+    _pulseController.dispose();
     _tabController.dispose();
-    _clockTimer?.cancel();
     super.dispose();
   }
 
@@ -640,15 +870,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
       child: Stack(
         children: [
-          if (isDark)
-            Positioned.fill(
-              child: CustomPaint(
-                painter: GalaxyDrawerPainter(
-                  isDark: isDark,
-                  primaryColor: colorScheme.primary,
-                ),
-              ),
-            ),
           Column(
             children: [
           // Enhanced Premium Header
@@ -885,7 +1106,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 const SizedBox(height: 8),
                 _buildDrawerSection("EXPLORE", [
                   _buildDrawerItem(
-                    Icons.auto_awesome_rounded,
+                    Icons.request_quote_rounded,
                     "Scholar Program",
                     colorScheme,
                     () => Navigator.pushNamed(context, "/scholar"),
@@ -910,6 +1131,27 @@ class _DashboardScreenState extends State<DashboardScreen>
                     "App Settings",
                     colorScheme,
                     () => Navigator.pushNamed(context, "/app-settings"),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+                _buildDrawerSection("ABOUT", [
+                  _buildDrawerItem(
+                    Icons.info_outline_rounded,
+                    "About Lume",
+                    colorScheme,
+                    () => Navigator.pushNamed(context, "/about"),
+                  ),
+                  _buildDrawerItem(
+                    Icons.description_outlined,
+                    "Terms and Conditions",
+                    colorScheme,
+                    () => Navigator.pushNamed(context, "/terms"),
+                  ),
+                  _buildDrawerItem(
+                    Icons.privacy_tip_outlined,
+                    "Privacy Policy",
+                    colorScheme,
+                    () => Navigator.pushNamed(context, "/privacy"),
                   ),
                 ]),
 
@@ -1429,20 +1671,20 @@ class _DashboardScreenState extends State<DashboardScreen>
         children: [
           Row(
             children: [
-              // Orange left strip
+              // Decorative left strip
               Container(
                 width: 10,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      Color(0xFF6D28D9), // Deep Purple
-                      Color(0xFF9333EA), // Bright Purple
-                      Color(0xFF7C3AED), // Medium Purple
+                      colorScheme.primary.withOpacity(0.7),
+                      colorScheme.primary,
+                      colorScheme.primary.withOpacity(0.8),
                     ],
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                   ),
-                  borderRadius: BorderRadius.only(
+                  borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(24),
                     bottomLeft: Radius.circular(24),
                   ),
@@ -1935,7 +2177,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           drawer: _buildDrawer(context, colorScheme),
           body: Stack(
             children: [
-              // Background Gradient accent
+              // Background Gradient accents
               Positioned(
                 top: -100,
                 right: -100,
@@ -1947,6 +2189,23 @@ class _DashboardScreenState extends State<DashboardScreen>
                     gradient: RadialGradient(
                       colors: [
                         colorScheme.secondary.withOpacity(0.4),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: -150,
+                left: -100,
+                child: Container(
+                  width: 400,
+                  height: 400,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        colorScheme.primary.withOpacity(0.2),
                         Colors.transparent,
                       ],
                     ),
@@ -2181,13 +2440,6 @@ class _DashboardScreenState extends State<DashboardScreen>
           bottomNavigationBar: Container(
             decoration: BoxDecoration(
               color: colorScheme.surface,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
-                  blurRadius: 20,
-                  offset: const Offset(0, -5),
-                ),
-              ],
             ),
             child: SafeArea(
               child: Padding(
@@ -2232,6 +2484,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
+
+
   Widget _buildHomeTab(BuildContext context, ColorScheme colorScheme) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -2245,41 +2499,610 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
         ),
-        Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.construction_rounded,
-                size: 64,
-                color: colorScheme.primary.withOpacity(0.3),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                "Coming Soon",
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.onSurface.withOpacity(0.6),
+        SafeArea(
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              children: [
+              const SizedBox(height: 12),
+              // Interactive PhonePe-style Card Stack
+              SizedBox(
+                height: 195,
+                width: double.infinity,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                    // Dynamic Depth Swapping: Back card built FIRST
+                    if (_isNcmcPrimary) ...[
+                      _buildInteractiveBalanceCard(
+                        context,
+                        colorScheme,
+                        isNcmc: false,
+                        key: const ValueKey("prepaid_card"),
+                      ),
+                      _buildInteractiveBalanceCard(
+                        context,
+                        colorScheme,
+                        isNcmc: true,
+                        key: const ValueKey("ncmc_card"),
+                      ),
+                    ] else ...[
+                      _buildInteractiveBalanceCard(
+                        context,
+                        colorScheme,
+                        isNcmc: true,
+                        key: const ValueKey("ncmc_card"),
+                      ),
+                      _buildInteractiveBalanceCard(
+                        context,
+                        colorScheme,
+                        isNcmc: false,
+                        key: const ValueKey("prepaid_card"),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
+              if (_hasActiveMandates)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                  child: GestureDetector(
+                    onTap: () => Navigator.pushNamed(context, '/mandates'),
+                    child: Container(
+                      width: double.infinity,
+                      height: 110,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            colorScheme.primaryContainer.withOpacity(isDark ? 0.4 : 0.7),
+                            colorScheme.surface,
+                            colorScheme.primaryContainer.withOpacity(isDark ? 0.3 : 0.5),
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(28),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.04),
+                            blurRadius: 15,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: Stack(
+                        children: [
+                          // Decorative Autopay-relevant background element
+                          Positioned(
+                            right: -20,
+                            top: -10,
+                            child: Transform.rotate(
+                              angle: -0.2,
+                              child: Container(
+                                width: 140,
+                                height: 180,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      colorScheme.primary.withOpacity(0.8),
+                                      colorScheme.primary.withOpacity(0.4),
+                                    ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(24),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(20),
+                                  child: Icon(
+                                    Icons.published_with_changes_rounded,
+                                    size: 40,
+                                    color: Colors.white.withOpacity(0.2),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          
+                          // Content Row
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  flex: 6,
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        "Smart Recharge ON",
+                                        style: TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.w900,
+                                          color: colorScheme.onSurface,
+                                          letterSpacing: -0.5,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        "Your wallet refills automatically\nand travel smart",
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: colorScheme.onSurface.withOpacity(0.6),
+                                          height: 1.2,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                // Manage Button
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.05),
+                                        blurRadius: 10,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Text(
+                                    "Manage",
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w900,
+                                      color: colorScheme.primary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+              else
+                const SizedBox(height: 8),
+
+              _buildLumePartnerAd(context, colorScheme),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      ),
+    ],
+    );
+  }
+
+  Widget _buildLumePartnerAd(BuildContext context, ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Unlock every",
+            style: TextStyle(
+              fontSize: 34,
+              fontWeight: FontWeight.bold,
+              color: colorScheme.onSurface.withOpacity(isDark ? 0.6 : 0.35),
+              height: 1.1,
+              letterSpacing: -1.0,
+            ),
+          ),
+          Text(
+            "campus moment,",
+            style: TextStyle(
+              fontSize: 34,
+              fontWeight: FontWeight.bold,
+              color: colorScheme.onSurface.withOpacity(isDark ? 0.6 : 0.35),
+              height: 1.1,
+              letterSpacing: -1.0,
+            ),
+          ),
+          ShaderMask(
+            shaderCallback: (bounds) => LinearGradient(
+              colors: [
+                colorScheme.primary,
+                colorScheme.primary.withOpacity(0.8),
+              ],
+            ).createShader(bounds),
+            child: const Text(
+              "Experience Lume",
+              style: TextStyle(
+                fontSize: 34,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+                height: 1.1,
+                letterSpacing: -1.5,
+              ),
+            ),
+          ),
+          const SizedBox(height: 48),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _buildPartnerLogo("assets/logos/npci.png", height: 28),
+              _buildPartnerLogo("assets/logos/rupay.png", height: 22),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPartnerLogo(String assetPath, {double height = 30}) {
+    return Image.asset(
+      assetPath,
+      height: height,
+      fit: BoxFit.contain,
+      errorBuilder: (context, error, stackTrace) => Container(),
+    );
+  }
+
+  Widget _buildInteractiveBalanceCard(
+    BuildContext context,
+    ColorScheme colorScheme, {
+    required bool isNcmc,
+    required Key key,
+  }) {
+    final bool isFront = isNcmc == _isNcmcPrimary;
+    
+    // Updated offsets for the "Stacked Strip" look from the image
+    // Back card peeks out from TOP
+    final double targetTop = isFront ? 45.0 : 0.0;
+    final double targetLeft = 24.0;
+    final double targetRight = 24.0;
+    final double targetScale = isFront ? 1.0 : 0.95;
+    final double targetOpacity = isFront ? 1.0 : 0.85;
+
+    // Refined Tinted Colors matched with Dashboard UI
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    // Both cards now use the premium Silver/Slate theme for a uniform dashboard look
+    final Color cardBg = isFront
+        ? (isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC))
+        : colorScheme.surface;
+    
+    final Color labelColor = isDark 
+        ? Colors.white.withOpacity(0.9) 
+        : const Color(0xFF475569); // High contrast label
+        
+    final Color patternColor = (isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFCBD5E1).withOpacity(0.4));
+
+    return AnimatedPositioned(
+      key: key,
+      duration: const Duration(milliseconds: 600),
+      curve: Curves.easeInOutSine,
+      top: targetTop,
+      left: targetLeft,
+      right: targetRight,
+      child: GestureDetector(
+        onTap: isFront ? null : () => setState(() => _isNcmcPrimary = isNcmc),
+        child: AnimatedScale(
+          scale: targetScale,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeOutBack,
+          child: AnimatedOpacity(
+            opacity: targetOpacity,
+            duration: const Duration(milliseconds: 400),
+            child: Container(
+              decoration: BoxDecoration(
+                color: cardBg,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(isFront ? 0.08 : 0.04),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+                border: Border.all(
+                  color: isFront
+                      ? colorScheme.primary.withOpacity(0.2)
+                      : colorScheme.outlineVariant.withOpacity(0.2),
+                  width: 1.2,
+                ),
+              ),
+              child: Stack(
+                children: [
+                  // Pattern Decoration
+                  Positioned(
+                    right: -20,
+                    bottom: -20,
+                    child: Opacity(
+                      opacity: 0.6,
+                      child: CustomPaint(
+                        size: const Size(150, 150),
+                        painter: CardPatternPainter(color: patternColor),
+                      ),
+                    ),
+                  ),
+                  
+                  // Card Content
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    child: isNcmc
+                        ? _buildNcmcCardContent(context, colorScheme, isFront, labelColor)
+                        : _buildPrepaidCardContent(context, colorScheme, isFront, labelColor, showAddMoney: true),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+
+
+
+  Widget _buildPrepaidCardContent(BuildContext context, ColorScheme colorScheme,
+      bool isPrimary, Color labelColor,
+      {bool showAddMoney = true}) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          "PREPAID WALLET",
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            color: labelColor,
+            letterSpacing: 0.8,
+          ),
+        ),
+        if (isPrimary) ...[
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              GestureDetector(
+                onTap: () => setState(() => _isBalanceVisible = !_isBalanceVisible),
                 child: Text(
-                  "We're working on something exciting for your Home hub!",
-                  textAlign: TextAlign.center,
+                  _isBalanceVisible
+                      ? "₹ ${NumberFormat('#,##,##0.00').format(_cardBalance)}"
+                      : "₹ • • • • • •",
                   style: TextStyle(
-                    color: colorScheme.onSurface.withOpacity(0.4),
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                    color: Theme.of(context).brightness == Brightness.dark 
+                        ? Colors.white 
+                        : const Color(0xFF1E293B),
+                    letterSpacing: -1,
+                  ),
+                ),
+              ),
+              // Action Button
+              if (showAddMoney)
+                GestureDetector(
+                  onTap: () async {
+                    final refresh = await Navigator.pushNamed(context, '/add-money');
+                    if (refresh == true) {
+                      _loadUserProfile();
+                    }
+                  },
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primary,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: colorScheme.primary.withOpacity(0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.add_rounded, size: 16, color: Colors.white),
+                        SizedBox(width: 6),
+                        Text(
+                          "Add Money",
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                _buildRuPayLogo(fontSize: 18),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            "Available Balance",
+            style: TextStyle(
+              fontSize: 13,
+              color: isDark ? Colors.white.withOpacity(0.5) : Colors.black.withOpacity(0.4),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildNcmcCardContent(BuildContext context, ColorScheme colorScheme, bool isPrimary, Color labelColor) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    String formattedUpdate = "Never";
+    if (_ncmcLastUpdated != null) {
+      try {
+        DateTime dt = DateTime.parse(_ncmcLastUpdated!);
+        formattedUpdate = DateFormat('dd MMM, hh:mm a').format(dt);
+      } catch (_) {}
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              "NCMC BALANCE",
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: labelColor,
+                letterSpacing: 0.8,
+              ),
+            ),
+            GestureDetector(
+              onTap: () => Navigator.pushNamed(context, "/ncmc-details"),
+              child: Icon(
+                Icons.info_outline_rounded,
+                size: 16,
+                color: labelColor.withOpacity(0.6),
+              ),
+            ),
+          ],
+        ),
+        if (isPrimary) ...[
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GestureDetector(
+                      onTap: () async {
+                        final wasHidden = !_isNcmcBalanceVisible;
+                        setState(() {
+                          _isNcmcBalanceVisible = !_isNcmcBalanceVisible;
+                        });
+
+                        // If unmasking, update last updated timestamp in backend
+                        if (wasHidden && _authToken != null) {
+                          try {
+                            final res = await ApiService.updateNcmcTimestamp(_authToken!);
+                            if (res["success"] == true && mounted) {
+                              setState(() {
+                                _ncmcLastUpdated = res["ncmc_last_updated"];
+                              });
+                            }
+                          } catch (e) {
+                            debugPrint("Error updating NCMC timestamp: $e");
+                          }
+                        }
+                      },
+                      child: Text(
+                        _isNcmcBalanceVisible
+                            ? "₹ ${NumberFormat('#,##,##0.00').format(_ncmcBalance)}"
+                            : "₹ • • • • • •",
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: Theme.of(context).brightness == Brightness.dark 
+                              ? Colors.white 
+                              : const Color(0xFF1E293B),
+                          letterSpacing: -1,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      "Last Updated: $formattedUpdate",
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: isDark ? Colors.white.withOpacity(0.5) : Colors.black.withOpacity(0.4),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (_ncmcUnclaimedBalance > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: GestureDetector(
+                          onTap: _isNfcAvailable ? _claimNcmcViaNfc : null,
+                          child: Text(
+                            "Unclaimed Balance: ₹${_ncmcUnclaimedBalance.toStringAsFixed(2)} ${_isNfcAvailable ? 'Tap to Claim' : 'Claim at Kiosk'}",
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: isDark ? Colors.white.withOpacity(0.7) : Colors.black.withOpacity(0.7),
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          "Unclaimed Balance: ₹0.00",
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: isDark ? Colors.white.withOpacity(0.7) : Colors.black.withOpacity(0.7),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              // Action Button
+              GestureDetector(
+                onTap: _showNcmcRechargeDialog,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primary,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colorScheme.primary.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.bolt_rounded, size: 16, color: Colors.white),
+                      SizedBox(width: 6),
+                      Text(
+                        "Recharge",
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ],
           ),
-        ),
+        ],
       ],
     );
   }
+
 
   Widget _buildKYCPendingView(BuildContext context, ColorScheme colorScheme) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
@@ -2829,6 +3652,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             children: [
               if (_kycStatus == "Completed") ...[
                 _buildBalanceStrip(colorScheme),
+                const SizedBox(height: 24),
                 _buildFlippingCard(context, colorScheme),
                 const SizedBox(height: 30),
                 _buildCardActions(context, colorScheme),
@@ -2851,69 +3675,51 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildBalanceStrip(ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // Matching the Home tab's premium Silver/Slate colors
+    final Color cardBg =
+        isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC);
+    final Color labelColor =
+        isDark ? Colors.white.withOpacity(0.9) : const Color(0xFF475569);
+    final Color patternColor = isDark
+        ? Colors.white.withOpacity(0.05)
+        : const Color(0xFFCBD5E1).withOpacity(0.4);
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 24),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      width: double.infinity,
+      height: 150,
       decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(24),
+        color: cardBg,
+        borderRadius: BorderRadius.circular(28),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 15,
-            offset: const Offset(0, 5),
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
           ),
         ],
         border: Border.all(
-          color: colorScheme.outlineVariant.withOpacity(0.3),
+          color: colorScheme.primary.withOpacity(0.2),
+          width: 1.2,
         ),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Stack(
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                "Card Balance",
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: colorScheme.onSurfaceVariant.withOpacity(0.7),
-                  letterSpacing: 0.5,
-                ),
+          // Background Pattern
+          Positioned.fill(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: CustomPaint(
+                painter: CardPatternPainter(color: patternColor),
               ),
-              const SizedBox(height: 4),
-              GestureDetector(
-                onTap:
-                    () => setState(() => _isBalanceVisible = !_isBalanceVisible),
-                child: Row(
-                  children: [
-                    Text(
-                      _isBalanceVisible
-                          ? "₹ ${NumberFormat('#,##,##0.00').format(_cardBalance)}"
-                          : "₹ ••••••",
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                        color: colorScheme.onSurface,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Icon(
-                      _isBalanceVisible
-                          ? Icons.visibility_off_rounded
-                          : Icons.visibility_rounded,
-                      size: 18,
-                      color: colorScheme.primary.withOpacity(0.6),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
-          _buildRuPayLogo(fontSize: 16),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: _buildPrepaidCardContent(context, colorScheme, true, labelColor,
+                showAddMoney: false),
+          ),
         ],
       ),
     );
@@ -3214,39 +4020,68 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
         ),
-        Center(
+        SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                Icons.auto_awesome_rounded,
-                size: 64,
-                color: colorScheme.primary.withOpacity(0.3),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                "Coming Soon",
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.onSurface.withOpacity(0.6),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: Text(
-                  "Smart transit tracking and passes are on their way!",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: colorScheme.onSurface.withOpacity(0.4),
-                  ),
-                ),
-              ),
+              _buildNcmcBalanceStrip(colorScheme),
+              const SizedBox(height: 35),
+              _buildTransactionsSection(context, colorScheme, isTransit: true),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildNcmcBalanceStrip(ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // Matching the Home tab's premium Silver/Slate colors
+    final Color cardBg =
+        isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC);
+    final Color labelColor =
+        isDark ? Colors.white.withOpacity(0.9) : const Color(0xFF475569);
+    final Color patternColor = isDark
+        ? Colors.white.withOpacity(0.05)
+        : const Color(0xFFCBD5E1).withOpacity(0.4);
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+        border: Border.all(
+          color: colorScheme.primary.withOpacity(0.2),
+          width: 1.2,
+        ),
+      ),
+      child: Stack(
+        children: [
+          // Background Pattern
+          Positioned.fill(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: CustomPaint(
+                painter: CardPatternPainter(color: patternColor),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: _buildNcmcCardContent(context, colorScheme, true, labelColor),
+          ),
+        ],
+      ),
     );
   }
 
@@ -4110,79 +4945,112 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget _buildTransactionsSection(
     BuildContext context,
-    ColorScheme colorScheme,
-  ) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              "Card Transactions",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-            ),
-            GestureDetector(
-              onTap: () => Navigator.pushNamed(context, "/transactions"),
-              child: Row(
-                children: [
-                  Text(
-                    "View all",
-                    style: TextStyle(
-                      color: colorScheme.primary,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    size: 18,
-                    color: colorScheme.primary,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
+    ColorScheme colorScheme, {
+    bool isTransit = false,
+  }) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    final displayList = _recentTransactions.where((tx) {
+      final category = tx["category"]?.toString() ?? "Card";
+      return isTransit ? category.toLowerCase() == "transit" : category.toLowerCase() != "transit";
+    }).toList();
 
-        if (_recentTransactions.isEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 32),
-            decoration: BoxDecoration(
-              color: colorScheme.surface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: colorScheme.outlineVariant.withOpacity(0.3),
-              ),
-            ),
-            child: Column(
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
+          ),
+        ],
+        border: Border.all(
+          color: isDark ? Colors.white.withOpacity(0.08) : const Color(0xFFF1F5F9),
+        ),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Icon(
-                  Icons.receipt_long_outlined,
-                  size: 48,
-                  color: colorScheme.onSurfaceVariant.withOpacity(0.5),
+                const Text(
+                  "Recent Transactions",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  "No transactions done",
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: colorScheme.onSurfaceVariant,
+                GestureDetector(
+                  onTap: () => Navigator.pushNamed(context, "/transactions", arguments: {"initialTab": isTransit ? 1 : 0}),
+                  child: Row(
+                    children: [
+                      Text(
+                        "View all",
+                        style: TextStyle(
+                          color: colorScheme.primary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        size: 18,
+                        color: colorScheme.primary,
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-          )
-        else
-          ..._recentTransactions
-              .take(5)
-              .map((tx) => _buildTransactionItem(tx, colorScheme))
-              .toList(),
-      ],
+          ),
+          Divider(
+            height: 1,
+            color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFF1F5F9),
+          ),
+          if (displayList.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 32),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.receipt_long_outlined,
+                    size: 48,
+                    color: colorScheme.onSurfaceVariant.withOpacity(0.5),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    "No transactions done",
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: displayList.length > 5 ? 5 : displayList.length,
+              separatorBuilder: (context, index) => Divider(
+                height: 1,
+                color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFF1F5F9),
+                indent: 64,
+                endIndent: 16,
+              ),
+              itemBuilder: (context, index) {
+                final tx = displayList[index];
+                return _buildTransactionItem(tx, colorScheme, isInsideTile: true);
+              },
+            ),
+        ],
+      ),
     );
   }
 
@@ -4191,98 +5059,183 @@ class _DashboardScreenState extends State<DashboardScreen>
     ColorScheme colorScheme,
   ) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final double screenWidth = MediaQuery.of(context).size.width;
 
     return Container(
-      padding: const EdgeInsets.all(24),
+      width: double.infinity,
+      height: 155, // Increased height for better spacing
       decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(24),
         gradient: LinearGradient(
-          colors: [
-            colorScheme.primary.withOpacity(isDark ? 0.15 : 0.08),
-            colorScheme.primary.withOpacity(isDark ? 0.05 : 0.02),
-          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
+          colors: isDark
+              ? [
+                  colorScheme.surface,
+                  colorScheme.surface.withOpacity(0.8),
+                  colorScheme.primary.withOpacity(0.1),
+                ]
+              : [
+                  Colors.white,
+                  colorScheme.primary.withOpacity(0.05),
+                ],
         ),
-        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
+          ),
+        ],
         border: Border.all(
-          color: colorScheme.primary.withOpacity(0.2),
-          width: 1.5,
+          color: isDark
+              ? colorScheme.primary.withOpacity(0.2)
+              : colorScheme.outlineVariant.withOpacity(0.3),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: colorScheme.primary.withOpacity(0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.credit_card_rounded,
-                  color: colorScheme.primary,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Order Physical Card",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: colorScheme.onSurface,
-                        letterSpacing: -0.5,
-                      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          children: [
+            // Rotated stylized Lume Card
+            Positioned(
+              right: -90, // Slightly more tucked
+              top: 10,
+              child: Transform.rotate(
+                angle: -0.3,
+                child: Container(
+                  width: 220,
+                  height: 250,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [
+                        Color(0xFF1F2937),
+                        Color(0xFF374151),
+                        Color(0xFF111827),
+                        Color(0xFF1F2937),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      stops: [0.0, 0.4, 0.6, 1.0],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      "Get your elegant physical Lume card delivered to your doorstep.",
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w500,
-                        height: 1.3,
+                    borderRadius: BorderRadius.circular(20),
+                    border: isDark 
+                        ? Border.all(color: Colors.white.withOpacity(0.1), width: 1.5)
+                        : null,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.4),
+                        blurRadius: 15,
+                        offset: const Offset(-5, 5),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
+                  child: Stack(
+                    children: [
+                      const Positioned(
+                        top: 24,
+                        left: 24,
+                        child: Text(
+                          "🄻🅄🄼🄴",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w400,
+                            letterSpacing: 2.0,
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: 24,
+                        right: 32, // Moved further right away from the logo
+                        child: Transform.rotate(
+                          angle: 1.57,
+                          child: const Icon(
+                            Icons.contactless_outlined,
+                            color: Colors.white70,
+                            size: 22,
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: 80,
+                        left: 24,
+                        child: Container(
+                          width: 35,
+                          height: 25,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(4),
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFFDE68A), Color(0xFFF59E0B)],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: ElevatedButton(
-              onPressed: () => _showOrderCardFormSheet(context, colorScheme),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: colorScheme.primary,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
-              child: const Row(
+            ),
+
+            // Left side content: Using Column to prevent vertical overlap
+            Positioned(
+              left: 20,
+              top: 0,
+              bottom: 0,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    "Order Now",
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                    "Order Lume Card Today!",
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: colorScheme.onSurface,
+                      letterSpacing: -0.5,
+                    ),
                   ),
-                  SizedBox(width: 8),
-                  Icon(Icons.arrow_forward_rounded, size: 18),
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    width: screenWidth * 0.44, // Optimized width
+                    child: Text(
+                      "Order your physical card TAP, PAY and EARN!!!",
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: colorScheme.onSurfaceVariant.withOpacity(0.9),
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16), // Fixed spacing
+                  ElevatedButton(
+                    onPressed: () => _showOrderCardFormSheet(context, colorScheme),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: colorScheme.primary,
+                      foregroundColor: colorScheme.onPrimary,
+                      elevation: 4,
+                      shadowColor: colorScheme.primary.withOpacity(0.3),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      minimumSize: const Size(0, 42),
+                    ),
+                    child: const Text(
+                      "Order now",
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -4764,6 +5717,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   ],
                 ),
               ),
+              CardStatusAnimation(status: _orderStatus),
             ],
           ),
           const SizedBox(height: 24),
@@ -4902,7 +5856,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  Widget _buildTransactionItem(dynamic tx, ColorScheme colorScheme) {
+  Widget _buildTransactionItem(dynamic tx, ColorScheme colorScheme, {bool isInsideTile = false}) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
 
     IconData icon;
@@ -4917,21 +5871,21 @@ class _DashboardScreenState extends State<DashboardScreen>
         iconColor = Colors.redAccent;
         iconBgColor = Colors.redAccent.withOpacity(0.1);
         amountColor = Colors.redAccent;
-        prefix = "-";
+        prefix = "- ";
         break;
       case "received":
         icon = Icons.arrow_downward_rounded;
         iconColor = Colors.green;
         iconBgColor = Colors.green.withOpacity(0.1);
         amountColor = Colors.green;
-        prefix = "+";
+        prefix = "+ ";
         break;
       default: // topup
         icon = Icons.account_balance_wallet_rounded;
         iconColor = const Color(0xFF0284C7);
         iconBgColor = const Color(0xFFE0F2FE);
         amountColor = const Color(0xFF0284C7);
-        prefix = "+";
+        prefix = "+ ";
     }
 
     Color statusColor;
@@ -4947,81 +5901,279 @@ class _DashboardScreenState extends State<DashboardScreen>
         statusColor = Colors.orange;
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E293B) : Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.3 : 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-        border: Border.all(
-          color: colorScheme.outlineVariant.withOpacity(isDark ? 0.5 : 0.2),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: iconBgColor,
-              shape: BoxShape.circle,
+    return InkWell(
+      onTap: () => _showTransactionDetails(tx, colorScheme),
+      borderRadius: BorderRadius.circular(isInsideTile ? 0 : 20),
+      child: Container(
+        margin: isInsideTile ? EdgeInsets.zero : const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: isInsideTile
+            ? null
+            : BoxDecoration(
+                color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(isDark ? 0.3 : 0.03),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+                border: Border.all(
+                  color: colorScheme.outlineVariant.withOpacity(isDark ? 0.5 : 0.2),
+                ),
+              ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: iconBgColor,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: iconColor, size: 20),
             ),
-            child: Icon(icon, color: iconColor, size: 20),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    tx["title"],
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    tx["date"],
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: colorScheme.onSurfaceVariant.withOpacity(0.8),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  tx["title"],
+                  "$prefix₹${tx["amount"].toStringAsFixed(2)}",
                   style: TextStyle(
                     fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: colorScheme.onSurface,
+                    fontWeight: FontWeight.w800,
+                    color: amountColor,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  tx["date"],
+                  tx["status"],
                   style: TextStyle(
                     fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: colorScheme.onSurfaceVariant.withOpacity(0.8),
+                    fontWeight: FontWeight.w700,
+                    color: statusColor,
                   ),
                 ),
               ],
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showTransactionDetails(Map<String, dynamic> tx, ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF0F172A) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: colorScheme.onSurfaceVariant.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 20),
+                    // Status Badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: (tx["status"].toString().toLowerCase() == "success" ? Colors.green : Colors.orange).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: (tx["status"].toString().toLowerCase() == "success" ? Colors.green : Colors.orange).withOpacity(0.2),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            tx["status"].toString().toLowerCase() == "success" ? Icons.check_circle_rounded : Icons.info_rounded,
+                            size: 16,
+                            color: tx["status"].toString().toLowerCase() == "success" ? Colors.green : Colors.orange,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            tx["status"].toString().toUpperCase(),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: tx["status"].toString().toLowerCase() == "success" ? Colors.green : Colors.orange,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    // Amount
+                    Text(
+                      "${tx["type"] == "paid" ? "- " : "+ "}₹${tx["amount"].toStringAsFixed(2)}",
+                      style: TextStyle(
+                        fontSize: 40,
+                        fontWeight: FontWeight.w900,
+                        color: colorScheme.onSurface,
+                        letterSpacing: -1,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      tx["title"],
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+                    // Details List
+                    _buildDetailRow("Transaction ID", tx["id"].toString(), colorScheme),
+                    _buildDetailRow("Date & Time", tx["date"], colorScheme),
+                    _buildDetailRow("Type", tx["type"].toString().toUpperCase(), colorScheme),
+                     _buildDetailRow(
+                      tx["type"] == "paid" ? "Merchant" : 
+                      tx["type"] == "received" ? "Receiver" : 
+                      tx["category"] == "Transit" ? "Service" : "Source",
+                      tx["title"], 
+                      colorScheme
+                    ),
+                    _buildDetailRow("Category", tx["category"] ?? "General", colorScheme),
+                    if (tx["reference"] != null)
+                      _buildDetailRow("Reference", tx["reference"], colorScheme),
+                    const SizedBox(height: 40),
+                    // Action Buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              final amount = tx["amount"].toStringAsFixed(2);
+                              final type = tx["type"].toString().toUpperCase();
+                              final date = tx["date"];
+                              final title = tx["title"];
+                              final status = tx["status"].toString().toUpperCase();
+                              final txId = tx["id"];
+
+                              final String shareLabel = 
+                                tx["type"] == "paid" ? "Merchant" : 
+                                tx["type"] == "received" ? "Receiver" : 
+                                tx["category"] == "Transit" ? "Service" : "Source";
+
+                              final String shareText = 
+                                "LUME Transaction Receipt\n\n"
+                                "$shareLabel: $title\n"
+                                "Amount: ₹$amount\n"
+                                "Type: $type\n"
+                                "Status: $status\n"
+                                "Date: $date\n"
+                                "Transaction ID: $txId\n\n"
+                                "Generated by Lume App";
+
+                              Share.share(shareText);
+                            },
+                            icon: const Icon(Icons.share_rounded, size: 18),
+                            label: const Text("Share Receipt"),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              side: BorderSide(color: colorScheme.outlineVariant),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context); // Close sheet
+                              Navigator.pushNamed(context, "/help-support");
+                            },
+                            icon: const Icon(Icons.help_outline_rounded, size: 18),
+                            label: const Text("Need Help?"),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: colorScheme.primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value, ColorScheme colorScheme) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: colorScheme.onSurfaceVariant.withOpacity(0.7),
+            ),
           ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                "$prefix₹${tx["amount"].toStringAsFixed(2)}",
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: amountColor,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                tx["status"],
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: statusColor,
-                ),
-              ),
-            ],
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: colorScheme.onSurface,
+            ),
           ),
         ],
       ),
@@ -5270,51 +6422,43 @@ class HomeBackgroundPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final double opacity = isDark ? 0.12 : 0.08;
-    final List<IconData> icons = [
-      Icons.grid_view_rounded,
-      Icons.widgets_rounded,
-      Icons.layers_rounded,
-      Icons.auto_awesome_mosaic_rounded,
-    ];
+    final paint = Paint()
+      ..color = color.withOpacity(isDark ? 0.12 : 0.08)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
 
-    for (int i = 0; i < 8; i++) {
-      final double xPos = size.width * (0.1 + (i % 3) * 0.35);
-      final double yPos = size.height * (0.1 + i * 0.12);
-      final IconData icon = icons[i % icons.length];
+    // 1. Draw stylized "Home" shapes
+    for (int i = 0; i < 6; i++) {
+      final double xPos = size.width * (0.15 + (i % 2) * 0.6);
+      final double yPos = size.height * (0.1 + i * 0.15);
 
-      _drawIcon(
-        canvas,
-        icon,
-        Offset(xPos, yPos),
-        40,
-        color.withOpacity(opacity),
-      );
+      canvas.save();
+      canvas.translate(xPos, yPos);
+      canvas.rotate(0.15 * (i + 1));
+
+      // Draw simplified house outline
+      final path = Path();
+      path.moveTo(-30, 10);
+      path.lineTo(-30, 40);
+      path.lineTo(30, 40);
+      path.lineTo(30, 10);
+      path.lineTo(0, -20);
+      path.close();
+      canvas.drawPath(path, paint);
+
+      // Draw a window detail
+      canvas.drawRect(const Rect.fromLTWH(-12, 10, 10, 10), paint);
+      canvas.drawRect(const Rect.fromLTWH(2, 10, 10, 10), paint);
+
+      canvas.restore();
     }
-  }
 
-  void _drawIcon(
-    Canvas canvas,
-    IconData icon,
-    Offset center,
-    double size,
-    Color color,
-  ) {
-    final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
-    textPainter.text = TextSpan(
-      text: String.fromCharCode(icon.codePoint),
-      style: TextStyle(
-        fontSize: size,
-        fontFamily: icon.fontFamily,
-        package: icon.fontPackage,
-        color: color,
-      ),
-    );
-    textPainter.layout();
-    textPainter.paint(
-      canvas,
-      center - Offset(textPainter.width / 2, textPainter.height / 2),
-    );
+    // 2. Soft decorative circles
+    final dotPaint = Paint()
+      ..color = color.withOpacity(isDark ? 0.06 : 0.04)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(Offset(size.width * 0.85, size.height * 0.2), 80, dotPaint);
+    canvas.drawCircle(Offset(size.width * 0.15, size.height * 0.7), 100, dotPaint);
   }
 
   @override
@@ -5330,51 +6474,40 @@ class RewardsBackgroundPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final double opacity = isDark ? 0.12 : 0.08;
-    final List<IconData> icons = [
-      Icons.card_giftcard_rounded,
-      Icons.restaurant_rounded,
-      Icons.attach_money_rounded,
-      Icons.monetization_on_rounded,
-    ];
+    final paint = Paint()
+      ..color = color.withOpacity(isDark ? 0.12 : 0.08)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
 
-    for (int i = 0; i < 8; i++) {
-      final double xPos = size.width * (0.15 + (i % 3) * 0.32);
-      final double yPos = size.height * (0.05 + i * 0.13);
-      final IconData icon = icons[i % icons.length];
+    // 1. Draw stylized "Gift" shapes
+    for (int i = 0; i < 6; i++) {
+      final double xPos = size.width * (0.2 + (i % 2) * 0.5);
+      final double yPos = size.height * (0.1 + i * 0.15);
 
-      _drawIcon(
-        canvas,
-        icon,
-        Offset(xPos, yPos),
-        45,
-        color.withOpacity(opacity),
+      canvas.save();
+      canvas.translate(xPos, yPos);
+      canvas.rotate(0.2 * (i + 1));
+
+      // Draw box outline
+      final rect = RRect.fromRectAndRadius(
+        const Rect.fromLTWH(-30, -20, 60, 50),
+        const Radius.circular(4),
       );
-    }
-  }
+      canvas.drawRRect(rect, paint);
 
-  void _drawIcon(
-    Canvas canvas,
-    IconData icon,
-    Offset center,
-    double size,
-    Color color,
-  ) {
-    final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
-    textPainter.text = TextSpan(
-      text: String.fromCharCode(icon.codePoint),
-      style: TextStyle(
-        fontSize: size,
-        fontFamily: icon.fontFamily,
-        package: icon.fontPackage,
-        color: color,
-      ),
-    );
-    textPainter.layout();
-    textPainter.paint(
-      canvas,
-      center - Offset(textPainter.width / 2, textPainter.height / 2),
-    );
+      // Draw Ribbon crossing
+      canvas.drawLine(const Offset(-30, 5), const Offset(30, 5), paint);
+      canvas.drawLine(const Offset(0, -20), const Offset(0, 30), paint);
+
+      canvas.restore();
+    }
+
+    // 2. Soft decorative circles
+    final dotPaint = Paint()
+      ..color = color.withOpacity(isDark ? 0.06 : 0.04)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(Offset(size.width * 0.1, size.height * 0.2), 90, dotPaint);
+    canvas.drawCircle(Offset(size.width * 0.8, size.height * 0.8), 120, dotPaint);
   }
 
   @override
@@ -5390,51 +6523,42 @@ class TransitBackgroundPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final double opacity = isDark ? 0.12 : 0.08;
-    final List<IconData> icons = [
-      Icons.subway_rounded,
-      Icons.directions_bus_rounded,
-      Icons.flight_rounded,
-      Icons.commute_rounded,
-    ];
+    final paint = Paint()
+      ..color = color.withOpacity(isDark ? 0.12 : 0.08)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
 
+    // 1. Draw stylized "Ticket" shapes
     for (int i = 0; i < 6; i++) {
-      final double xPos = size.width * (0.2 + (i % 2) * 0.5);
+      final double xPos = size.width * (0.15 + (i % 2) * 0.6);
       final double yPos = size.height * (0.1 + i * 0.15);
-      final IconData icon = icons[i % icons.length];
 
-      _drawIcon(
-        canvas,
-        icon,
-        Offset(xPos, yPos),
-        42,
-        color.withOpacity(opacity),
+      canvas.save();
+      canvas.translate(xPos, yPos);
+      canvas.rotate(-0.1 * (i + 1));
+
+      // Draw ticket outline
+      final rect = RRect.fromRectAndRadius(
+        const Rect.fromLTWH(-40, -20, 80, 40),
+        const Radius.circular(4),
       );
-    }
-  }
+      canvas.drawRRect(rect, paint);
 
-  void _drawIcon(
-    Canvas canvas,
-    IconData icon,
-    Offset center,
-    double size,
-    Color color,
-  ) {
-    final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
-    textPainter.text = TextSpan(
-      text: String.fromCharCode(icon.codePoint),
-      style: TextStyle(
-        fontSize: size,
-        fontFamily: icon.fontFamily,
-        package: icon.fontPackage,
-        color: color,
-      ),
-    );
-    textPainter.layout();
-    textPainter.paint(
-      canvas,
-      center - Offset(textPainter.width / 2, textPainter.height / 2),
-    );
+      // Draw "magnetic stripe" or dashed line
+      final stripePaint = Paint()
+        ..color = color.withOpacity(isDark ? 0.1 : 0.05)
+        ..style = PaintingStyle.fill;
+      canvas.drawRect(const Rect.fromLTWH(-40, -10, 80, 10), stripePaint);
+
+      canvas.restore();
+    }
+
+    // 2. Soft decorative circles
+    final dotPaint = Paint()
+      ..color = color.withOpacity(isDark ? 0.06 : 0.04)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(Offset(size.width * 0.7, size.height * 0.1), 100, dotPaint);
+    canvas.drawCircle(Offset(size.width * 0.2, size.height * 0.9), 80, dotPaint);
   }
 
   @override
@@ -5442,75 +6566,231 @@ class TransitBackgroundPainter extends CustomPainter {
       oldDelegate.color != color || oldDelegate.isDark != isDark;
 }
 
-class GalaxyDrawerPainter extends CustomPainter {
-  final bool isDark;
-  final Color primaryColor;
 
-  GalaxyDrawerPainter({required this.isDark, required this.primaryColor});
+class CardPatternPainter extends CustomPainter {
+  final Color color;
+  CardPatternPainter({required this.color});
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (!isDark) return;
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
 
-    final random = Random(42); // Fixed seed for consistent stars
+    final path = Path();
     
-    // 1. Draw solid space background (much darker charcoal tint)
-    final bgPaint = Paint()..color = const Color(0xFF020617).withOpacity(0.55);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bgPaint);
-
-    // 2. Draw Stars (Static)
-    for (int i = 0; i < 110; i++) {
-      final x = random.nextDouble() * size.width;
-      final y = random.nextDouble() * size.height;
-      final radius = 0.2 + random.nextDouble() * 1.3;
-      final opacity = 0.1 + random.nextDouble() * 0.6;
-      
-      final starPaint = Paint()..color = Colors.white.withOpacity(opacity);
-      canvas.drawCircle(Offset(x, y), radius, starPaint);
+    // Draw decorative geometric lines
+    for (var i = 0; i < 5; i++) {
+      path.moveTo(size.width * (0.2 * i), 0);
+      path.lineTo(size.width, size.height * (1 - 0.2 * i));
     }
-
-    // 3. Draw "Nebula" Glows (Subtle smears of color)
-    final nebulaPaint = Paint()
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 60);
-
-    for (int i = 0; i < 4; i++) {
-      final center = Offset(
-        random.nextDouble() * size.width,
-        random.nextDouble() * size.height,
-      );
-      // Mix primary color with a deep purple/blue for galaxy feel
-      nebulaPaint.color = i % 2 == 0 
-          ? primaryColor.withOpacity(0.06) 
-          : Colors.deepPurpleAccent.withOpacity(0.04);
-      
-      canvas.drawCircle(center, 120 + random.nextDouble() * 100, nebulaPaint);
-    }
-
-    // 4. Draw Shooting Stars (Comets)
-    for (int i = 0; i < 4; i++) {
-      final startX = random.nextDouble() * size.width;
-      final startY = random.nextDouble() * (size.height * 0.7); // Keep them mostly top/middle
-      final length = 60.0 + random.nextDouble() * 100.0;
-      
-      final cometPath = Path()
-        ..moveTo(startX, startY)
-        ..lineTo(startX + length, startY + length * 0.3);
-
-      final cometPaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.2
-        ..strokeCap = ui.StrokeCap.round
-        ..shader = ui.Gradient.linear(
-          Offset(startX, startY),
-          Offset(startX + length, startY + length * 0.3),
-          [Colors.white.withOpacity(0.6), Colors.white.withOpacity(0)],
-          [0.0, 1.0],
+    
+    for (var i = 0; i < 3; i++) {
+        canvas.drawCircle(
+          Offset(size.width * 0.8, size.height * 0.2),
+          20.0 * (i + 1),
+          paint..color = color.withOpacity(0.1 * (3 - i)),
         );
-
-      canvas.drawPath(cometPath, cometPaint);
     }
+
+    canvas.drawPath(path, paint..color = color.withOpacity(0.2));
   }
 
   @override
-  bool shouldRepaint(covariant GalaxyDrawerPainter oldDelegate) => false;
+  bool shouldRepaint(CustomPainter oldDelegate) => false;
 }
+
+class CardStatusAnimation extends StatefulWidget {
+  final String status;
+  const CardStatusAnimation({super.key, required this.status});
+
+  @override
+  State<CardStatusAnimation> createState() => _CardStatusAnimationState();
+}
+
+class _CardStatusAnimationState extends State<CardStatusAnimation>
+    with TickerProviderStateMixin {
+  late AnimationController _boxController;
+  late AnimationController _truckController;
+
+  @override
+  void initState() {
+    super.initState();
+    _boxController =
+        AnimationController(vsync: this, duration: const Duration(seconds: 2))
+          ..repeat();
+    _truckController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1500))
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _boxController.dispose();
+    _truckController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.status == "ORDERED" || widget.status == "PRINTING") {
+      // Packing Animation
+      return AnimatedBuilder(
+        animation: _boxController,
+        builder: (context, child) {
+          final double cardY = (_boxController.value * 25) - 15;
+          final double boxScale = 1.0 +
+              (Curves.easeInOut.transform(_boxController.value) * 0.08);
+          final bool isPrinting = widget.status == "PRINTING";
+          final Color themeColor = isPrinting ? Colors.blue : Colors.orange;
+
+          return SizedBox(
+            width: 70,
+            height: 70,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Glowing Background
+                Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: themeColor.withOpacity(0.15),
+                        blurRadius: 15,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                ),
+                // Box
+                Transform.scale(
+                  scale: boxScale,
+                  child: Icon(
+                    isPrinting ? Icons.print_rounded : Icons.inventory_2_rounded,
+                    color: themeColor.withOpacity(0.4),
+                    size: 44,
+                  ),
+                ),
+                // Card moving in
+                if (!isPrinting)
+                  Transform.translate(
+                    offset: Offset(0, cardY),
+                    child: Opacity(
+                      opacity: (1.2 - _boxController.value * 1.5).clamp(0.0, 1.0),
+                      child: Container(
+                        width: 24,
+                        height: 15,
+                        decoration: BoxDecoration(
+                          color: Colors.blueAccent,
+                          borderRadius: BorderRadius.circular(4),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 4,
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                                color: Colors.white24, shape: BoxShape.circle),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      );
+    } else if (widget.status == "DISPATCHED") {
+      // Delivery Animation
+      return AnimatedBuilder(
+        animation: _truckController,
+        builder: (context, child) {
+          final double truckBounce = Curves.easeInOut
+                  .transform((_truckController.value * 2) % 1.0) *
+              2;
+          return SizedBox(
+            width: 70,
+            height: 70,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Speed lines
+                ...List.generate(
+                    3,
+                    (i) => Positioned(
+                          right: 15 +
+                              (1.0 - _truckController.value) * 40 +
+                              (i * 12),
+                          top: 25.0 + (i * 10),
+                          child: Opacity(
+                            opacity: (1.0 - _truckController.value).clamp(0.0, 1.0),
+                            child: Container(
+                              width: 14 - (i * 2.0),
+                              height: 2.5,
+                              decoration: BoxDecoration(
+                                color: Colors.purple.withOpacity(0.4),
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ),
+                        )),
+                // Truck
+                Transform.translate(
+                  offset: Offset(0, -truckBounce),
+                  child: const Icon(
+                    Icons.local_shipping_rounded,
+                    color: Colors.purple,
+                    size: 42,
+                  ),
+                ),
+                // Ground smoke/dust
+                Positioned(
+                  bottom: 18,
+                  left: 15,
+                  child: Opacity(
+                    opacity: (_truckController.value).clamp(0.0, 0.4),
+                    child: Icon(Icons.cloud_rounded,
+                        color: Colors.grey.withOpacity(0.2), size: 16),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    } else if (widget.status == "DELIVERED" || widget.status == "RECEIVED") {
+      return SizedBox(
+        width: 70,
+        height: 70,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.check_circle_rounded,
+                color: Colors.green,
+                size: 38,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return const SizedBox(width: 70, height: 70);
+  }
+}
+

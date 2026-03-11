@@ -140,212 +140,206 @@ class _ScholarScreenState extends State<ScholarScreen> {
               ),
             ),
           ),
-          Column(
-            children: [
-              // Fixed Premium Header
-              Container(
-                height: size.height * 0.3,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [colorScheme.primary, colorScheme.secondary],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+          CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              // Dynamic Premium Header
+              SliverAppBar(
+                expandedHeight: size.height * 0.3,
+                pinned: true,
+                stretch: true,
+                backgroundColor: colorScheme.primary,
+                elevation: 0,
+                leadingWidth: 70,
+                centerTitle: true,
+                leading: Center(
+                  child: IconButton(
+                    icon: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.5), width: 1.5),
+                      ),
+                      child: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 20),
+                    ),
+                    onPressed: () => Navigator.pop(context),
                   ),
                 ),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Positioned(
-                      bottom: -30,
-                      right: 20,
-                      child: Icon(Icons.school_rounded, size: 120, color: Colors.white.withValues(alpha: 0.1)),
-                    ),
-                    SafeArea(
-                      child: Stack(
-                        children: [
-                          Positioned(
-                            top: 10,
-                            left: 12,
-                            child: IconButton(
-                              icon: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.2),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white.withValues(alpha: 0.5), width: 1.5),
-                                ),
-                                child: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 20),
-                              ),
-                              onPressed: () => Navigator.pop(context),
-                            ),
+                flexibleSpace: FlexibleSpaceBar(
+                  centerTitle: true,
+                  expandedTitleScale: 1.0,
+                  titlePadding: EdgeInsets.zero,
+                  title: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final double top = constraints.biggest.height;
+                      final double expandedHeight = size.height * 0.3;
+                      final double collapsedHeight = MediaQuery.of(context).padding.top + kToolbarHeight;
+                      final double delta = expandedHeight - collapsedHeight;
+                      final double progress = ((top - collapsedHeight) / delta).clamp(0.0, 1.0);
+
+                      final double fontSize = 18 + (14 * progress);
+                      
+                      return Container(
+                        padding: EdgeInsets.only(
+                          left: 25 * (1 - progress) + (20 * progress),
+                          bottom: 25 * progress,
+                        ),
+                        alignment: Alignment.lerp(
+                          Alignment.center,
+                          Alignment.bottomLeft,
+                          progress,
+                        ),
+                        child: Text(
+                          "Scholar Hub",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: fontSize,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.5 * progress,
                           ),
-                          Positioned(
-                            bottom: 25,
-                            left: 20,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                        ),
+                      );
+                    },
+                  ),
+                  background: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [colorScheme.primary, colorScheme.secondary],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        right: 20,
+                        child: Icon(Icons.school_rounded, size: 120, color: Colors.white.withValues(alpha: 0.1)),
+                      ),
+                    ],
+                  ),
+                ),
+                bottom: PreferredSize(
+                  preferredSize: const Size.fromHeight(20),
+                  child: Container(
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surface,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(30),
+                        topRight: Radius.circular(30),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // Content Area
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ================= COLORFUL AUTO TYPING TEXT =================
+                      SizedBox(
+                        height: 160,
+                        child: ShaderMask(
+                          shaderCallback: (bounds) => const LinearGradient(
+                            colors: [
+                              Color(0xFF4C6EF5),
+                              Color(0xFF00C2FF),
+                              Color(0xFFFFC107),
+                            ],
+                          ).createShader(bounds),
+                          child: RichText(
+                            text: TextSpan(
+                              style: const TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.w800,
+                                height: 1.4,
+                                letterSpacing: 0.4,
+                              ),
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.2),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: ConstrainedBox(
-                                    constraints: const BoxConstraints(maxWidth: 220),
-                                    child: Text(
-                                      "Hey, $userName 👋",
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
+                                TextSpan(
+                                  text: '${visibleText.split('\n').take(2).join('\n')}\n',
                                 ),
-                                const SizedBox(height: 12),
-                                const Text(
-                                  "Scholar Hub",
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 32,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: -0.5,
+                                TextSpan(
+                                  text: visibleText.split('\n').length > 2
+                                      ? visibleText.split('\n')[2]
+                                      : '',
+                                  style: const TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 0.2,
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
 
-              // Content Area with rounded top
-              Expanded(
-                child: Container(
-                  width: double.infinity,
-                  transform: Matrix4.translationValues(0, -30, 0),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surface,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(30),
-                      topRight: Radius.circular(30),
-                    ),
-                  ),
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-            // ================= COLORFUL AUTO TYPING TEXT =================
-            SizedBox(
-            height: 160,
-            child: ShaderMask(
-              shaderCallback: (bounds) => const LinearGradient(
-                colors: [
-                  Color(0xFF4C6EF5),
-                  Color(0xFF00C2FF),
-                  Color(0xFFFFC107),
-                ],
-              ).createShader(bounds),
-              child: RichText(
-              text: TextSpan(
-                style: const TextStyle(
-                  fontSize: 28,             
-                  fontWeight: FontWeight.w800, 
-                  height: 1.4,
-                  letterSpacing: 0.4, 
-                ),
-                children: [
-                  TextSpan(
-                    text: '${visibleText.split('\n').take(2).join('\n')}\n',
-                  ),
-                  TextSpan(
-                    text: visibleText.split('\n').length > 2
-                        ? visibleText.split('\n')[2]
-                        : '',
-                    style: const TextStyle(
-                      fontSize: 22,            
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+                      const SizedBox(height: 28),
 
-            ),
-          ),
+                      // ================= AUTO SWAPPING STATS =================
+                      SizedBox(
+                        height: 170,
+                        child: PageView.builder(
+                          controller: _pageController,
+                          scrollDirection: Axis.horizontal,
+                          physics: const PageScrollPhysics(),
+                          onPageChanged: (index) {
+                            _currentPage = index;
+                          },
+                          itemBuilder: (_, index) {
+                            final items = [
+                              const _ScholarStatCard(
+                                logoPath: "assets/logos/university.png",
+                                value: "5+",
+                                label: "Partner Universities",
+                              ),
+                              const _ScholarStatCard(
+                                logoPath: "assets/logos/students.png",
+                                value: "1 Lakh+",
+                                label: "Students Guided",
+                              ),
+                              const _ScholarStatCard(
+                                logoPath: "assets/logos/loan.png",
+                                value: "₹2 Cr+",
+                                label: "Loans Processed",
+                              ),
+                            ];
 
+                            return items[index % items.length];
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 32),
 
-            const SizedBox(height: 28),
-
-            // ================= AUTO SWAPPING STATS =================
-            SizedBox(
-            height: 170,
-            child: PageView.builder(
-              controller: _pageController,
-              scrollDirection: Axis.horizontal,
-              physics: const PageScrollPhysics(),
-                onPageChanged: (index) {
-                  _currentPage = index;
-                },
-                itemBuilder: (_, index) {
-                  final items = [
-                  const _ScholarStatCard(
-                  logoPath: "assets/logos/university.png",
-                  value: "5+",
-                  label: "Partner Universities",
-                ),
-
-                  const _ScholarStatCard(
-                  logoPath: "assets/logos/students.png",
-                  value: "1 Lakh+",
-                  label: "Students Guided",
-                ),
-
-                const _ScholarStatCard(
-                logoPath: "assets/logos/loan.png",
-                value: "₹2 Cr+",
-                label: "Loans Processed",
-              ),
-
-                ];
-
-                  return items[index % items.length];
-                },
-            ),
-          ),
-          const SizedBox(height: 32),
-
-          // ================= LENDING PARTNER OFFERINGS =================
-         _LendingPartnersSection(
-          userName: userName,
-          hasApplication: hasApplication,
-          applicationStatus: applicationStatus,
-          onApplicationSubmitted: () async {
-            await _loadApplicationStatus();
-            setState(() {});
-          },
-        ),
-                        const SizedBox(height: 40),
-                      ],
-                    ),
+                      // ================= LENDING PARTNER OFFERINGS =================
+                      _LendingPartnersSection(
+                        userName: userName,
+                        hasApplication: hasApplication,
+                        applicationStatus: applicationStatus,
+                        onApplicationSubmitted: () async {
+                          await _loadApplicationStatus();
+                          setState(() {});
+                        },
+                      ),
+                      const SizedBox(height: 40),
+                    ],
                   ),
                 ),
-              ),
               ),
             ],
           ),
         ],
       ),
-    );
+      );
   }
 }
 

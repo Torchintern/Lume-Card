@@ -397,19 +397,20 @@ class _CardBenefitsScreenState extends State<CardBenefitsScreen> with SingleTick
         children: [
           Row(
             children: [
+              // Decorative left strip
               Container(
                 width: 10,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      Color(0xFF6D28D9), // Deep Purple
-                      Color(0xFF9333EA), // Bright Purple
-                      Color(0xFF7C3AED), // Medium Purple
+                      colorScheme.primary.withOpacity(0.7),
+                      colorScheme.primary,
+                      colorScheme.primary.withOpacity(0.8),
                     ],
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                   ),
-                  borderRadius: BorderRadius.only(
+                  borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(24),
                     bottomLeft: Radius.circular(24),
                   ),

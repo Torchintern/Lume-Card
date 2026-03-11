@@ -162,6 +162,9 @@ class LumeCard(db.Model):
 
     # Balance
     balance = db.Column(db.Numeric(12,2), default=0.00)
+    ncmc_balance = db.Column(db.Numeric(12,2), default=0.00)
+    ncmc_unclaimed_balance = db.Column(db.Numeric(12,2), default=0.00)
+    ncmc_last_updated = db.Column(db.DateTime, default=db.func.current_timestamp())
 
     # Card state
     card_state = db.Column(
@@ -246,6 +249,45 @@ class Transaction(db.Model):
         db.Enum("Success", "Expired", "Cancelled", "Pending"),
         default="Success"
     )
+
+    category = db.Column(
+        db.Enum("Card", "Transit"),
+        default="Card"
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        server_default=db.func.now(),
+        index=True
+    )
+
+# ===================== MANDATES =========================
+class Mandate(db.Model):
+    __tablename__ = "mandates"
+
+    id = db.Column(db.Integer, primary_key=True)
+    
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("lume_users.id"),
+        nullable=False
+    )
+    user = db.relationship("LumeUser", backref="mandates")
+
+    mandate_type = db.Column(db.String(50)) # "Frequency" or "Threshold"
+    frequency = db.Column(db.String(50), nullable=True) # "Weekly" or "Monthly"
+    day_of_week = db.Column(db.String(20), nullable=True)
+    date_of_month = db.Column(db.Integer, nullable=True)
+    
+    amount = db.Column(db.Numeric(12, 2), nullable=True) # Recharge amount
+    threshold_amount = db.Column(db.Numeric(12, 2), nullable=True)
+    
+    status = db.Column(
+        db.Enum("Active", "Paused", "Inactive", "Pending"),
+        default="Active"
+    )
+
+    last_processed_at = db.Column(db.DateTime, nullable=True)
 
     created_at = db.Column(
         db.DateTime,

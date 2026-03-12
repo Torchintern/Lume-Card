@@ -129,7 +129,7 @@ class NcmcDetailsScreen extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
                 child: Column(
                   children: [
-                    _sectionTitle(context, "ONE CARD - ONE APP - TWO WALLETS"),
+                    _sectionTitle(context, "ONE APP - ONE CARD - TWO WALLETS"),
                     _card(
                       Icons.payments_rounded,
                       colorScheme.primary,
@@ -145,7 +145,7 @@ class NcmcDetailsScreen extends StatelessWidget {
                       context: context,
                     ),
                     Image.asset(
-                      "assets/images/ncmc_wallets.png",
+                      "assets/images/ncmc_wallet.png",
                       height: 280,
                       fit: BoxFit.contain,
                     ),
@@ -180,7 +180,7 @@ class NcmcDetailsScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 20),
                           Image.asset(
-                            "assets/images/ncmc_unclaimed.png",
+                            "assets/images/ncmc_unclaim.png",
                             height: 160,
                             fit: BoxFit.contain,
                           ),

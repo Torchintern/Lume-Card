@@ -96,6 +96,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   WeatherCondition _currentCondition = WeatherCondition.cloudy;
   Timer? _clockTimer;
   Timer? _refreshTimer;
+  late PageController _headerPageController;
+  Timer? _headerAutoScrollTimer;
+  int _currentHeaderPage = 0;
 
   final Map<WeatherCondition, WeatherTheme> _weatherThemes = {
     WeatherCondition.sunny: const WeatherTheme(
@@ -157,6 +160,8 @@ class _DashboardScreenState extends State<DashboardScreen>
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
 
+    _headerPageController = PageController(initialPage: 400); // Start at a multiple of 4
+    _startHeaderAutoScroll();
     _animationController.forward();
     _loadUserProfile();
     _fetchWeather();
@@ -164,6 +169,19 @@ class _DashboardScreenState extends State<DashboardScreen>
     _startAutoRefresh();
     _checkNfcAvailability();
     CampusAppPicker.preload();
+  }
+
+  void _startHeaderAutoScroll() {
+    _headerAutoScrollTimer?.cancel();
+    _headerAutoScrollTimer = Timer.periodic(const Duration(seconds: 7), (timer) {
+      if (_headerPageController.hasClients) {
+        _headerPageController.nextPage(
+          duration: const Duration(milliseconds: 1000),
+          curve: Curves.easeInOutCubic,
+        );
+        HapticFeedback.selectionClick();
+      }
+    });
   }
 
   Future<void> _checkNfcAvailability() async {
@@ -582,7 +600,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   void dispose() {
     _clockTimer?.cancel();
     _refreshTimer?.cancel();
+    _headerAutoScrollTimer?.cancel();
     _tabController.removeListener(_handleTabSelection);
+    _headerPageController.dispose();
     _animationController.dispose();
     _flipController.dispose();
     _pulseController.dispose();
@@ -823,10 +843,12 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget _buildDrawer(BuildContext context, ColorScheme colorScheme) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color dashColor = isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC);
+    final Color dashBg = isDark ? const Color(0xFF0F172A) : Colors.white;
 
     // ================= STATUS UI LOGIC =================
     late Color statusColor;
-    late Color bgColor;
+    late Color chipBg;
     late IconData statusIcon;
     late String statusText;
 
@@ -834,33 +856,33 @@ class _DashboardScreenState extends State<DashboardScreen>
       case "completed":
       case "verified":
         statusColor = const Color(0xFF10B981); // Emerald Green
-        bgColor = const Color(0xFFECFDF5);
+        chipBg = isDark ? statusColor.withOpacity(0.15) : const Color(0xFFECFDF5);
         statusIcon = Icons.check_circle_rounded;
         statusText = "KYC Verified";
         break;
       case "booked":
       case "under process":
         statusColor = const Color(0xFF3B82F6); // Lume Blue
-        bgColor = const Color(0xFFEFF6FF);
+        chipBg = isDark ? statusColor.withOpacity(0.15) : const Color(0xFFEFF6FF);
         statusIcon = Icons.event_available_rounded;
         statusText = "KYC Booked";
         break;
       case "rejected":
         statusColor = Colors.redAccent;
-        bgColor = const Color(0xFFFEF2F2);
+        chipBg = isDark ? statusColor.withOpacity(0.15) : const Color(0xFFFEF2F2);
         statusIcon = Icons.error_outline_rounded;
         statusText = "KYC Rejected";
         break;
       default:
         statusColor = Colors.orange;
-        bgColor = const Color(0xFFFFF7ED);
+        chipBg = isDark ? statusColor.withOpacity(0.15) : const Color(0xFFFFF7ED);
         statusIcon = Icons.pending_actions_rounded;
         statusText = "KYC Pending";
     }
 
     return Drawer(
       width: MediaQuery.of(context).size.width * 0.82,
-      backgroundColor: colorScheme.surface,
+      backgroundColor: dashBg,
       elevation: 0,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.only(
@@ -882,12 +904,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                 end: Alignment.bottomRight,
                 colors: isDark
                     ? [
-                  colorScheme.primary.withOpacity(0.15),
-                  colorScheme.surface,
+                  colorScheme.primary.withOpacity(0.25),
+                  dashBg,
                 ]
                     : [
-                  colorScheme.primary.withOpacity(0.08),
-                  colorScheme.surface,
+                  colorScheme.primary.withOpacity(0.1),
+                  dashBg,
                 ],
               ),
               borderRadius: const BorderRadius.only(
@@ -998,7 +1020,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: bgColor,
+                              color: chipBg,
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(
@@ -1233,13 +1255,14 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildQuickInfo(IconData icon, String text, ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
+        color: isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: colorScheme.outlineVariant.withOpacity(0.35),
+          color: colorScheme.outlineVariant.withOpacity(isDark ? 0.4 : 0.2),
         ),
       ),
       child: Row(
@@ -1295,6 +1318,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     ColorScheme colorScheme,
     VoidCallback onTap,
   ) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
@@ -1311,7 +1335,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         leading: Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: colorScheme.primary.withOpacity(0.08),
+            color: colorScheme.primary.withOpacity(isDark ? 0.15 : 0.08),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Icon(icon, color: colorScheme.primary, size: 20),
@@ -2160,6 +2184,399 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
   }
 
+  List<Color> _getHeaderGradient(int index) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    switch (index) {
+      case 0:
+        return _weatherThemes[_currentCondition]!.gradientColors;
+      case 1: // Cashback
+        return isDark 
+            ? [const Color(0xFF1E1B4B), const Color(0xFF312E81)]
+            : [const Color(0xFF4F46E5), const Color(0xFF6366F1)];
+      case 2: // Rewards
+        return isDark
+            ? [const Color(0xFF064E3B), const Color(0xFF065F46)]
+            : [const Color(0xFF059669), const Color(0xFF10B981)];
+      case 3: // NCMC
+        return isDark
+            ? [const Color(0xFF7C2D12), const Color(0xFF9A3412)]
+            : [const Color(0xFFEA580C), const Color(0xFFF97316)];
+      default:
+        return _weatherThemes[_currentCondition]!.gradientColors;
+    }
+  }
+
+  Widget _buildWeatherAndGreetingSlide() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Background Gradient
+        Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: _weatherThemes[_currentCondition]!.gradientColors,
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+        // Dynamic Weather Accents
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 1000),
+          child: Container(
+            key: ValueKey(_currentCondition),
+            child: _buildWeatherAccents(),
+          ),
+        ),
+
+        // Header Content
+        Positioned(
+          bottom: 40,
+          left: 24,
+          right: 24,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "${_getGreeting()} ${_weatherThemes[_currentCondition]!.greetingSuffix}",
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _userName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.8,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        _getFormattedDate(),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.8),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Glassmorphism Weather Card
+              ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.2),
+                        width: 1.2,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(_weatherIcon, color: Colors.white, size: 28),
+                        const SizedBox(height: 6),
+                        Text(
+                          _weatherTemp,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        Text(
+                          _weatherDesc.toUpperCase(),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCashbackSlide() {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Background Gradient
+        Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: isDark 
+                  ? [const Color(0xFF1E1B4B), const Color(0xFF312E81)]
+                  : [const Color(0xFF4F46E5), const Color(0xFF6366F1)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+        Positioned(
+          right: -30,
+          top: -30,
+          child: Icon(Icons.stars_rounded, size: 200, color: Colors.white.withOpacity(0.1)),
+        ),
+        Positioned(
+          bottom: 40,
+          left: 24,
+          right: 24,
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text(
+                        "LIMITED TIME",
+                        style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      "Upto 100% Cashback",
+                      style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: -0.5),
+                    ),
+                    const Text(
+                      "on your first prepaid recharge",
+                      style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () => _tabController.animateTo(1),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.indigo,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text("Recharge Now", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.account_balance_wallet_rounded, size: 100, color: Colors.white24),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRewardsSlide() {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Background Gradient
+        Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: isDark
+                  ? [const Color(0xFF064E3B), const Color(0xFF065F46)]
+                  : [const Color(0xFF059669), const Color(0xFF10B981)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+        // Background decorative elements
+        Positioned(
+          top: 40,
+          right: 20,
+          child: Transform.rotate(
+            angle: 0.2,
+            child: Container(
+              width: 100,
+              height: 140,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withOpacity(0.2)),
+              ),
+              child: const Center(child: Icon(Icons.card_giftcard_rounded, color: Colors.white30, size: 40)),
+            ),
+          ),
+        ),
+        Positioned(
+          top: 60,
+          right: 60,
+          child: Transform.rotate(
+            angle: -0.1,
+            child: Container(
+              width: 100,
+              height: 140,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withOpacity(0.2)),
+              ),
+              child: const Center(child: Icon(Icons.confirmation_number_rounded, color: Colors.white30, size: 40)),
+            ),
+          ),
+        ),
+        
+        Positioned(
+          bottom: 40,
+          left: 24,
+          right: 120,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                "Enjoy huge discounts",
+                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: -0.5, height: 1.1),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                "with gift cards from 200+ brands",
+                style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => _tabController.animateTo(2),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.amber,
+                  foregroundColor: Colors.black87,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text("Explore Rewards", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+              ),
+            ],
+          ),
+        ),
+        
+        const Positioned(
+          bottom: -20,
+          right: -20,
+          child: Icon(Icons.savings_rounded, size: 150, color: Colors.white10),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNcmcRechargeSlide() {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Background Gradient
+        Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: isDark
+                  ? [const Color(0xFF7C2D12), const Color(0xFF9A3412)]
+                  : [const Color(0xFFEA580C), const Color(0xFFF97316)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+        Positioned(
+          left: -40,
+          top: -40,
+          child: Icon(Icons.directions_bus_rounded, size: 250, color: Colors.white.withOpacity(0.05)),
+        ),
+        Positioned(
+          bottom: 40,
+          left: 24,
+          right: 24,
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.bolt_rounded, color: Colors.amber, size: 18),
+                        const SizedBox(width: 4),
+                        Text(
+                          "SMART TRAVEL",
+                          style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      "Recharge NCMC Today",
+                      style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: -0.5),
+                    ),
+                    const Text(
+                      "Never run out of balance for your commute",
+                      style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () => _showNcmcRechargeDialog(),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.deepOrange,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text("Recharge Now", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.contactless_rounded, size: 100, color: Colors.white24),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -2213,190 +2630,118 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ),
               ),
 
-              Column(
-                children: [
-                  if (isHome)
-                    // Fixed Premium Header
-                    Container(
-                      height: size.height * 0.35,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors:
-                              _weatherThemes[_currentCondition]!.gradientColors,
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
+              // Fixed Premium Header (only on Home)
+              if (isHome)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: size.height * 0.35,
+                  child: Container(
+                    clipBehavior: Clip.antiAlias,
+                    decoration: const BoxDecoration(
+                      color: Colors.transparent,
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        PageView.builder(
+                          controller: _headerPageController,
+                          onPageChanged: (index) {
+                            setState(() {
+                              _currentHeaderPage = index % 4;
+                            });
+                          },
+                          itemBuilder: (context, index) {
+                            return AnimatedBuilder(
+                              animation: _headerPageController,
+                              builder: (context, child) {
+                                double value = 1.0;
+                                if (_headerPageController.position.haveDimensions) {
+                                  value = (_headerPageController.page! - index);
+                                  value = (1 - (value.abs() * 0.3)).clamp(0.0, 1.0);
+                                } else {
+                                  // Initial state before first frame
+                                  if (index == _headerPageController.initialPage) {
+                                    value = 1.0;
+                                  } else {
+                                    value = 0.7;
+                                  }
+                                }
+
+                                return Opacity(
+                                  opacity: value,
+                                  child: Transform.scale(
+                                    scale: value,
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: _buildHeaderSlide(index % 4),
+                            );
+                          },
                         ),
-                      ),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          // Dynamic Weather Accents
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 1000),
-                            child: Container(
-                              key: ValueKey(_currentCondition),
-                              child: _buildWeatherAccents(),
-                            ),
-                          ),
-
-                          // Profile Icon removed from here, now in global Stack for consistency
-
-                          // Header Content
-                          Positioned(
-                            bottom: 40,
-                            left: 24,
-                            right: 24,
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        "${_getGreeting()} ${_weatherThemes[_currentCondition]!.greetingSuffix}",
-                                        style: TextStyle(
-                                          color: Colors.white.withOpacity(0.9),
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                          letterSpacing: 0.2,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        _userName,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 26,
-                                          fontWeight: FontWeight.w900,
-                                          letterSpacing: -0.8,
-                                          height: 1.1,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black.withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          _getFormattedDate(),
-                                          style: TextStyle(
-                                            color: Colors.white.withOpacity(
-                                              0.8,
-                                            ),
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                        
+                        // Page Indicators
+                        Positioned(
+                          bottom: 20,
+                          left: 0,
+                          right: 0,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: List.generate(4, (index) {
+                              return AnimatedContainer(
+                                duration: const Duration(milliseconds: 300),
+                                margin: const EdgeInsets.symmetric(horizontal: 4),
+                                height: 6,
+                                width: _currentHeaderPage == index ? 20 : 6,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(_currentHeaderPage == index ? 0.9 : 0.4),
+                                  borderRadius: BorderRadius.circular(10),
                                 ),
-                                const SizedBox(width: 12),
-                                // Glassmorphism Weather Card
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(24),
-                                  child: BackdropFilter(
-                                    filter: ui.ImageFilter.blur(
-                                      sigmaX: 10,
-                                      sigmaY: 10,
-                                    ),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(14),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white.withOpacity(0.12),
-                                        borderRadius: BorderRadius.circular(24),
-                                        border: Border.all(
-                                          color: Colors.white.withOpacity(0.2),
-                                          width: 1.2,
-                                        ),
-                                      ),
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            _weatherIcon,
-                                            color: Colors.white,
-                                            size: 28,
-                                          ),
-                                          const SizedBox(height: 6),
-                                          Text(
-                                            _weatherTemp,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.w800,
-                                              letterSpacing: -0.5,
-                                            ),
-                                          ),
-                                          Text(
-                                            _weatherDesc.toUpperCase(),
-                                            style: TextStyle(
-                                              color: Colors.white.withOpacity(
-                                                0.7,
-                                              ),
-                                              fontSize: 9,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
+                              );
+                            }),
                           ),
-                        ],
-                      ),
-                    )
-                  else
-                    SizedBox(height: MediaQuery.of(context).padding.top + 56),
-
-                  // Content Area
-                  Expanded(
-                    child: Container(
-                      transform: isHome
-                          ? Matrix4.translationValues(0, -25, 0)
-                          : null,
-                      decoration: BoxDecoration(
-                        color: colorScheme.surface,
-                        borderRadius: isHome
-                            ? const BorderRadius.only(
-                                topLeft: Radius.circular(32),
-                                topRight: Radius.circular(32),
-                              )
-                            : null,
-                      ),
-                      child: TabBarView(
-                        controller: _tabController,
-                        children: [
-                          _TabKeepAliveWrapper(
-                            child: _buildHomeTab(context, colorScheme),
-                          ),
-                          _TabKeepAliveWrapper(
-                            child: _buildCardTab(context, colorScheme),
-                          ),
-                          _TabKeepAliveWrapper(
-                            child: _buildRewardsTab(context, colorScheme),
-                          ),
-                          _TabKeepAliveWrapper(
-                            child: _buildTransitTab(context, colorScheme),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
+                ),
+
+              // Content Area
+              Positioned.fill(
+                top: isHome
+                    ? (size.height * 0.35 - 28)
+                    : (MediaQuery.of(context).padding.top + 56),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface,
+                    borderRadius: isHome
+                        ? const BorderRadius.only(
+                            topLeft: Radius.circular(32),
+                            topRight: Radius.circular(32),
+                          )
+                        : null,
+                  ),
+                  clipBehavior: isHome ? Clip.antiAlias : Clip.none,
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _TabKeepAliveWrapper(
+                        child: _buildHomeTab(context, colorScheme),
+                      ),
+                      _TabKeepAliveWrapper(
+                        child: _buildCardTab(context, colorScheme, isHome),
+                      ),
+                      _TabKeepAliveWrapper(
+                        child: _buildRewardsTab(context, colorScheme),
+                      ),
+                      _TabKeepAliveWrapper(
+                        child: _buildTransitTab(context, colorScheme),
+                      ),
+                    ],
+                  ),
+                ),
               ),
 
               // Custom Header for other tabs
@@ -2486,6 +2831,16 @@ class _DashboardScreenState extends State<DashboardScreen>
 
 
 
+  Widget _buildHeaderSlide(int index) {
+    switch (index) {
+      case 0: return _buildWeatherAndGreetingSlide();
+      case 1: return _buildCashbackSlide();
+      case 2: return _buildRewardsSlide();
+      case 3: return _buildNcmcRechargeSlide();
+      default: return const SizedBox.shrink();
+    }
+  }
+
   Widget _buildHomeTab(BuildContext context, ColorScheme colorScheme) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -2499,12 +2854,11 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
         ),
-        SafeArea(
-          child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(),
-            child: Column(
-              children: [
-              const SizedBox(height: 12),
+        SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Column(
+            children: [
+              const SizedBox(height: 20),
               // Interactive PhonePe-style Card Stack
               SizedBox(
                 height: 195,
@@ -2675,8 +3029,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             ],
           ),
         ),
-      ),
-    ],
+      ],
     );
   }
 
@@ -2689,7 +3042,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            "Unlock every",
+            "Your Money's New Rhythm:",
             style: TextStyle(
               fontSize: 34,
               fontWeight: FontWeight.bold,
@@ -2699,7 +3052,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
           Text(
-            "campus moment,",
+            "TAP. PAY. PROSPER.",
             style: TextStyle(
               fontSize: 34,
               fontWeight: FontWeight.bold,
@@ -3619,7 +3972,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  Widget _buildCardTab(BuildContext context, ColorScheme colorScheme) {
+  Widget _buildCardTab(BuildContext context, ColorScheme colorScheme, bool isHome) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
 
     if (_kycStatus == "Pending") {
@@ -3646,7 +3999,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
         SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
+          padding: EdgeInsets.symmetric(
+              horizontal: 24.0, vertical: isHome ? 20 : 20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -4027,6 +4381,8 @@ class _DashboardScreenState extends State<DashboardScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildNcmcBalanceStrip(colorScheme),
+              const SizedBox(height: 20),
+              _buildNcmcRechargeBanner(colorScheme),
               const SizedBox(height: 35),
               _buildTransactionsSection(context, colorScheme, isTransit: true),
             ],
@@ -4081,6 +4437,151 @@ class _DashboardScreenState extends State<DashboardScreen>
             child: _buildNcmcCardContent(context, colorScheme, true, labelColor),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildNcmcRechargeBanner(ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color patternColor = isDark
+        ? Colors.white.withOpacity(0.05)
+        : const Color(0xFFCBD5E1).withOpacity(0.4);
+
+    return Container(
+      width: double.infinity,
+      height: 110,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            colorScheme.primaryContainer.withOpacity(isDark ? 0.4 : 0.7),
+            colorScheme.surface,
+            colorScheme.primaryContainer.withOpacity(isDark ? 0.3 : 0.5),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 15,
+            offset: const Offset(0, 8),
+          ),
+        ],
+        border: Border.all(
+          color: colorScheme.primary.withOpacity(0.15),
+          width: 1.2,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          // Background Pattern
+          Positioned.fill(
+            child: Opacity(
+              opacity: 0.5,
+              child: CustomPaint(
+                painter: CardPatternPainter(color: patternColor),
+              ),
+            ),
+          ),
+
+          // Tilted Accent Box (Matching Smart Recharge style)
+          Positioned(
+            left: -35,
+            top: -15,
+            child: Transform.rotate(
+              angle: 0.2, // Tilted slightly to the right for the left side
+              child: Container(
+                width: 160,
+                height: 180,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      colorScheme.primary.withOpacity(isDark ? 0.4 : 0.3),
+                      colorScheme.primary.withOpacity(isDark ? 0.2 : 0.1),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(32),
+                ),
+              ),
+            ),
+          ),
+
+          // Illustration
+          Positioned(
+            left: -60,
+            top: -20,
+            bottom: -60,
+            width: 280,
+            child: Opacity(
+              opacity: 0.95,
+              child: Image.asset(
+                "assets/images/train_bus.png",
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
+
+          // Text Content
+          Positioned(
+            left: 175,
+            right: 16,
+            top: 0,
+            bottom: 0,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Recharge NCMC",
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                Text(
+                  "card today!",
+                  style: TextStyle(
+                    color: colorScheme.onSurface.withOpacity(0.6),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 11),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    children: [
+                      _buildMiniBrandLogo("assets/banks/pnb.png"),
+                      const SizedBox(width: 8),
+                      _buildMiniBrandLogo("assets/banks/airtel.png"),
+                      const SizedBox(width: 8),
+                      _buildMiniBrandLogo("assets/banks/hdfc.png"),
+                      const SizedBox(width: 8),
+                      _buildMiniBrandLogo("assets/banks/sbi.png"),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMiniBrandLogo(String path) {
+    return SizedBox(
+      width: 34,
+      height: 20,
+      child: Image.asset(
+        path,
+        fit: BoxFit.contain,
       ),
     );
   }

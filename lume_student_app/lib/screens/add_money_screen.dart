@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,10 +18,47 @@ class _AddMoneyScreenState extends State<AddMoneyScreen> {
   bool _isProcessing = false;
   bool _needsRefresh = false; // Tracks if dashboard needs refresh on return
 
+  // ================= HEADER CAROUSEL =================
+  late PageController _headerPageController;
+  Timer? _headerAutoScrollTimer;
+  int _currentHeaderPage = 0;
+
+  // ================= SCROLL & FOCUS =================
+  final ScrollController _scrollController = ScrollController();
+  final FocusNode _amountFocusNode = FocusNode();
+
   @override
   void initState() {
     super.initState();
     _loadBalance();
+    _headerPageController = PageController(initialPage: 400);
+    _startHeaderAutoScroll();
+
+    // Auto-scroll on focus
+    _amountFocusNode.addListener(() {
+      if (_amountFocusNode.hasFocus) {
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (_scrollController.hasClients) {
+            _scrollController.animateTo(
+              _scrollController.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        });
+      }
+    });
+  }
+
+  void _startHeaderAutoScroll() {
+    _headerAutoScrollTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
+      if (_headerPageController.hasClients) {
+        _headerPageController.nextPage(
+          duration: const Duration(milliseconds: 1000),
+          curve: Curves.easeInOutCubic,
+        );
+      }
+    });
   }
 
   Future<void> _loadBalance() async {
@@ -90,6 +128,10 @@ class _AddMoneyScreenState extends State<AddMoneyScreen> {
   @override
   void dispose() {
     _amountController.dispose();
+    _headerAutoScrollTimer?.cancel();
+    _headerPageController.dispose();
+    _scrollController.dispose();
+    _amountFocusNode.dispose();
     super.dispose();
   }
 
@@ -109,347 +151,442 @@ class _AddMoneyScreenState extends State<AddMoneyScreen> {
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      body: Column(
+      body: Stack(
         children: [
-          // Fixed Premium Header
-          Container(
-            height: size.height * 0.25,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [colorScheme.primary, colorScheme.secondary],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                SafeArea(
-                  bottom: false,
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        top: 10,
-                        left: 12,
-                        child: IconButton(
-                          icon: Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.2),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.5),
-                                width: 1.5,
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.arrow_back_rounded,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                          onPressed: () => Navigator.pop(context, _needsRefresh),
+          CustomScrollView(
+            controller: _scrollController,
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              // Dynamic Premium Header
+              SliverAppBar(
+                expandedHeight: size.height * 0.35,
+                pinned: true,
+                stretch: true,
+                backgroundColor: colorScheme.primary,
+                elevation: 0,
+                leadingWidth: 70,
+                centerTitle: true,
+                leading: Center(
+                  child: IconButton(
+                    icon: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.5),
+                          width: 1.5,
                         ),
                       ),
-                      const Positioned(
-                        bottom: 50,
-                        left: 20,
+                      child: const Icon(
+                        Icons.arrow_back_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                    onPressed: () => Navigator.pop(context, _needsRefresh),
+                  ),
+                ),
+                flexibleSpace: FlexibleSpaceBar(
+                  centerTitle: true,
+                  expandedTitleScale: 1.0,
+                  titlePadding: EdgeInsets.zero,
+                  title: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final double top = constraints.biggest.height;
+                      final double expandedHeight = size.height * 0.35;
+                      final double collapsedHeight =
+                          MediaQuery.of(context).padding.top + kToolbarHeight;
+                      final double delta = expandedHeight - collapsedHeight;
+                      final double progress =
+                          ((top - collapsedHeight) / delta).clamp(0.0, 1.0);
+
+                      final double fontSize = 18 + (14 * progress);
+
+                      return Container(
+                        padding: EdgeInsets.only(
+                          left: 25 * (1 - progress) + (25 * progress),
+                          bottom: 25 * progress,
+                        ),
+                        alignment: Alignment.lerp(
+                          Alignment.center,
+                          Alignment.bottomLeft,
+                          progress,
+                        ),
                         child: Text(
-                          "Add Card Balance",
+                          "Top Up Wallet",
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 32,
+                            fontSize: fontSize,
                             fontWeight: FontWeight.w900,
-                            letterSpacing: -1,
+                            letterSpacing: -0.5 * progress,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  background: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // Dynamic Animated Background
+                      PageView.builder(
+                        controller: _headerPageController,
+                        onPageChanged: (index) {
+                          setState(() {
+                            _currentHeaderPage = index % 3;
+                          });
+                        },
+                        itemBuilder: (context, index) {
+                          final int realIndex = index % 3;
+                          return _buildHeaderSlide(realIndex, colorScheme);
+                        },
+                      ),
+
+                      // Overlay Gradient
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.black.withOpacity(0.35),
+                              Colors.transparent,
+                            ],
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.topCenter,
+                          ),
+                        ),
+                      ),
+
+                      // Indicators
+                      Positioned(
+                        top: MediaQuery.of(context).padding.top + 25,
+                        right: 25,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: List.generate(3, (index) {
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 300),
+                              margin: const EdgeInsets.only(left: 4),
+                              height: 4,
+                              width: _currentHeaderPage == index ? 12 : 4,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(
+                                    _currentHeaderPage == index ? 0.9 : 0.4),
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            );
+                          }),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                bottom: PreferredSize(
+                  preferredSize: const Size.fromHeight(20),
+                  child: Container(
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surface,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(32),
+                        topRight: Radius.circular(32),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // Content Area
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 180),
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? Colors.white.withOpacity(0.08)
+                              : const Color(0xFFE2E8F0).withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                height: 16,
+                                width: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Text(
+                                "Available Balance: ₹${NumberFormat('#,##,##0.00').format(_availableBalance)}",
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: isDark
+                                      ? Colors.white70
+                                      : const Color(0xFF64748B),
+                                ),
+                              ),
+                      ),
+                      const SizedBox(height: 50),
+                      TextField(
+                        controller: _amountController,
+                        focusNode: _amountFocusNode,
+                        textAlign: TextAlign.center,
+                        keyboardType: TextInputType.number,
+                        scrollPadding: const EdgeInsets.only(bottom: 250),
+                        cursorColor: colorScheme.primary,
+                        style: TextStyle(
+                          fontSize: 56,
+                          fontWeight: FontWeight.w900,
+                          color: isDark ? Colors.white : const Color(0xFF0F172A),
+                          letterSpacing: -1.5,
+                        ),
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        "Monthly limit left: ₹${NumberFormat('#,##,##0.00').format(limitRemaining)}",
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: limitRemaining == 0
+                              ? Colors.redAccent.withOpacity(isDark ? 0.8 : 1.0)
+                              : (isDark
+                                  ? Colors.white38
+                                  : const Color(0xFF94A3B8)),
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                      const SizedBox(height: 40),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _quickAddButton("+ ₹100", 100),
+                          const SizedBox(width: 12),
+                          _quickAddButton("+ ₹500", 500),
+                          const SizedBox(width: 12),
+                          _quickAddButton("+ ₹1,000", 1000),
+                        ],
+                      ),
+                      const SizedBox(height: 32),
+                      GestureDetector(
+                        onTap: () async {
+                          final result =
+                              await Navigator.pushNamed(context, '/set-mandate');
+                          if (result is Map && result['refresh'] == true) {
+                            _needsRefresh = true;
+                            // If backend returned new balance, apply it immediately
+                            final double? newBal =
+                                (result['newBalance'] as num?)?.toDouble();
+                            if (newBal != null && mounted) {
+                              setState(() => _availableBalance = newBal);
+                            } else {
+                              _loadBalance(); // Fallback: re-fetch
+                            }
+                          } else if (result == true) {
+                            _needsRefresh = true;
+                            _loadBalance();
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 16),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? Colors.white.withOpacity(0.04)
+                                : colorScheme.primary.withOpacity(0.04),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(
+                              color: isDark
+                                  ? Colors.white.withOpacity(0.08)
+                                  : colorScheme.primary.withOpacity(0.12),
+                              width: 1.5,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? colorScheme.primary.withOpacity(0.2)
+                                      : Colors.white,
+                                  shape: BoxShape.circle,
+                                  boxShadow: isDark
+                                      ? []
+                                      : [
+                                          BoxShadow(
+                                            color: colorScheme.primary
+                                                .withOpacity(0.1),
+                                            blurRadius: 10,
+                                            offset: const Offset(0, 4),
+                                          ),
+                                        ],
+                                ),
+                                child: Icon(
+                                  Icons.autorenew_rounded,
+                                  color: colorScheme.primary,
+                                  size: 22,
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      "Set Auto Top-Up",
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w800,
+                                        color: colorScheme.onSurface,
+                                        letterSpacing: -0.3,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      "Never run out of balance",
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: isDark
+                                            ? Colors.white54
+                                            : const Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primary,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Text(
+                                  "SETUP",
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
 
-          // Content Area with rounded top
-          Expanded(
+          // Bottom Payment Section
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
             child: Container(
-              width: double.infinity,
-              transform: Matrix4.translationValues(0, -25, 0),
+              padding: EdgeInsets.fromLTRB(24, 16, 24,
+                  MediaQuery.of(context).padding.bottom + 24),
               decoration: BoxDecoration(
-                color: colorScheme.surface,
+                color: isDark ? const Color(0xFF1E293B) : Colors.white,
                 borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(32),
-                  topRight: Radius.circular(32),
+                  topLeft: Radius.circular(40),
+                  topRight: Radius.circular(40),
                 ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(isDark ? 0.4 : 0.08),
+                    blurRadius: 30,
+                    offset: const Offset(0, -10),
+                  ),
+                ],
               ),
               child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      physics: const BouncingScrollPhysics(),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.fromLTRB(24, 32, 24, 0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: isDark ? Colors.white.withOpacity(0.08) : const Color(0xFFE2E8F0).withOpacity(0.5),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: _isLoading 
-                                  ? const SizedBox(
-                                      height: 16,
-                                      width: 16,
-                                      child: CircularProgressIndicator(strokeWidth: 2),
-                                    )
-                                  : Text(
-                                      "Available Balance: ₹${NumberFormat('#,##,##0.00').format(_availableBalance)}",
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: isDark ? Colors.white70 : const Color(0xFF64748B),
-                                      ),
-                                    ),
-                            ),
-                            const SizedBox(height: 50),
-                            TextField(
-                              controller: _amountController,
-                              textAlign: TextAlign.center,
-                              keyboardType: TextInputType.number,
-                              autofocus: true,
-                              cursorColor: colorScheme.primary,
-                              style: TextStyle(
-                                fontSize: 56,
-                                fontWeight: FontWeight.w900,
-                                color: isDark ? Colors.white : const Color(0xFF0F172A),
-                                letterSpacing: -1.5,
-                              ),
-                              decoration: const InputDecoration(
-                                border: InputBorder.none,
-                                contentPadding: EdgeInsets.zero,
-                              ),
-                              onChanged: (value) {
-                                // Disabled full rebuild to remove UI lag.
-                                // Button updates automatically via ListenableBuilder.
-                              },
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              "Monthly limit left: ₹${NumberFormat('#,##,##0.00').format(limitRemaining)}",
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                color: limitRemaining == 0 
-                                    ? Colors.redAccent.withOpacity(isDark ? 0.8 : 1.0) 
-                                    : (isDark ? Colors.white38 : const Color(0xFF94A3B8)),
-                                letterSpacing: 0.2,
-                              ),
-                            ),
-                            const SizedBox(height: 40),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                _quickAddButton("+ ₹100", 100),
-                                const SizedBox(width: 12),
-                                _quickAddButton("+ ₹500", 500),
-                                const SizedBox(width: 12),
-                                _quickAddButton("+ ₹1,000", 1000),
-                              ],
-                            ),
-                            const SizedBox(height: 32),
-                            GestureDetector(
-                              onTap: () async {
-                                final result = await Navigator.pushNamed(context, '/set-mandate');
-                                if (result is Map && result['refresh'] == true) {
-                                  _needsRefresh = true;
-                                  // If backend returned new balance, apply it immediately
-                                  final double? newBal = (result['newBalance'] as num?)?.toDouble();
-                                  if (newBal != null && mounted) {
-                                    setState(() => _availableBalance = newBal);
-                                  } else {
-                                    _loadBalance(); // Fallback: re-fetch
-                                  }
-                                } else if (result == true) {
-                                  _needsRefresh = true;
-                                  _loadBalance();
-                                }
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                                decoration: BoxDecoration(
-                                  color: isDark ? Colors.white.withOpacity(0.04) : colorScheme.primary.withOpacity(0.04),
-                                  borderRadius: BorderRadius.circular(24),
-                                  border: Border.all(
-                                    color: isDark ? Colors.white.withOpacity(0.08) : colorScheme.primary.withOpacity(0.12),
-                                    width: 1.5,
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(12),
-                                      decoration: BoxDecoration(
-                                        color: isDark ? colorScheme.primary.withOpacity(0.2) : Colors.white,
-                                        shape: BoxShape.circle,
-                                        boxShadow: isDark ? [] : [
-                                          BoxShadow(
-                                            color: colorScheme.primary.withOpacity(0.1),
-                                            blurRadius: 10,
-                                            offset: const Offset(0, 4),
-                                          ),
-                                        ],
-                                      ),
-                                      child: Icon(
-                                        Icons.autorenew_rounded,
-                                        color: colorScheme.primary,
-                                        size: 22,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 16),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            "Set Auto Top-Up",
-                                            style: TextStyle(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w800,
-                                              color: colorScheme.onSurface,
-                                              letterSpacing: -0.3,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            "Never run out of balance",
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600,
-                                              color: isDark ? Colors.white54 : const Color(0xFF64748B),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                      decoration: BoxDecoration(
-                                        color: colorScheme.primary,
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: const Text(
-                                        "SETUP",
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w800,
-                                          color: Colors.white,
-                                          letterSpacing: 0.5,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
+                  TextButton(
+                    onPressed: _showOrderSummary,
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: colorScheme.primary.withOpacity(0.5),
+                            width: 1,
+                          ),
+                        ),
+                      ),
+                      child: Text(
+                        "View order summary",
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: colorScheme.primary,
                         ),
                       ),
                     ),
                   ),
-
-                  // Bottom Payment Section
-                  Container(
-                    padding: EdgeInsets.fromLTRB(24, 16, 24, MediaQuery.of(context).padding.bottom + 24),
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF1E293B) : Colors.white,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(40),
-                        topRight: Radius.circular(40),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(isDark ? 0.4 : 0.08),
-                          blurRadius: 30,
-                          offset: const Offset(0, -10),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        TextButton(
-                          onPressed: _showOrderSummary,
-                          style: TextButton.styleFrom(
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            decoration: BoxDecoration(
-                              border: Border(
-                                bottom: BorderSide(
-                                  color: colorScheme.primary.withOpacity(0.5),
-                                  width: 1,
-                                ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ListenableBuilder(
+                        listenable: _amountController,
+                        builder: (context, _) {
+                          int currentAmount = int.tryParse(
+                                  _amountController.text.replaceAll(',', '')) ??
+                              0;
+                          return ElevatedButton(
+                            onPressed: (_isProcessing || currentAmount <= 0)
+                                ? null
+                                : _processPayment,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: currentAmount <= 0
+                                  ? (isDark
+                                      ? Colors.white12
+                                      : const Color(0xFFE2E8F0))
+                                  : colorScheme.primary,
+                              foregroundColor: currentAmount <= 0
+                                  ? (isDark
+                                      ? Colors.white38
+                                      : const Color(0xFF94A3B8))
+                                  : colorScheme.onPrimary,
+                              padding: const EdgeInsets.symmetric(vertical: 20),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
                               ),
+                              elevation: 0,
                             ),
-                            child: Text(
-                              "View order summary",
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: colorScheme.primary,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ListenableBuilder(
-                            listenable: _amountController,
-                            builder: (context, _) {
-                              int currentAmount = int.tryParse(_amountController.text.replaceAll(',', '')) ?? 0;
-                              return ElevatedButton(
-                                onPressed: (_isProcessing || currentAmount <= 0) ? null : _processPayment,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: currentAmount <= 0 
-                                      ? (isDark ? Colors.white12 : const Color(0xFFE2E8F0)) 
-                                      : colorScheme.primary,
-                                  foregroundColor: currentAmount <= 0
-                                      ? (isDark ? Colors.white38 : const Color(0xFF94A3B8))
-                                      : colorScheme.onPrimary,
-                                  padding: const EdgeInsets.symmetric(vertical: 20),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(20),
+                            child: _isProcessing
+                                ? const SizedBox(
+                                    height: 24,
+                                    width: 24,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 3,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : Text(
+                                    "Pay ₹${NumberFormat('#,##,##0').format(currentAmount)}.00",
+                                    style: const TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w900,
+                                    ),
                                   ),
-                                  elevation: 0,
-                                ),
-                                child: _isProcessing 
-                                    ? const SizedBox(
-                                        height: 24,
-                                        width: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 3,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : Text(
-                                        "Pay ₹${NumberFormat('#,##,##0').format(currentAmount)}.00",
-                                        style: const TextStyle(
-                                          fontSize: 17,
-                                          fontWeight: FontWeight.w900,
-                                        ),
-                                      ),
-                              );
-                            }
-                          ),
-                        ),
-                      ],
-                    ),
+                          );
+                        }),
                   ),
                 ],
               ),
@@ -821,6 +958,96 @@ class _AddMoneyScreenState extends State<AddMoneyScreen> {
             fontSize: 14,
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderSlide(int index, ColorScheme colorScheme) {
+    switch (index) {
+      case 0:
+        return _buildSlideBase(
+          color1: colorScheme.primary,
+          color2: colorScheme.secondary,
+          icon: Icons.account_balance_wallet_rounded,
+          title: "Wallet Security",
+          subtitle: "Funds are encrypted and protected by bank-grade security.",
+        );
+      case 1:
+        return _buildSlideBase(
+          color1: const Color(0xFF1E1B4B),
+          color2: const Color(0xFF4338CA),
+          icon: Icons.bolt_rounded,
+          title: "Instant Credit",
+          subtitle: "Money is added to your card balance instantly after payment.",
+        );
+      case 2:
+        return _buildSlideBase(
+          color1: const Color(0xFF0F172A),
+          color2: const Color(0xFF334155),
+          icon: Icons.confirmation_number_rounded,
+          title: "Smart Rewards",
+          subtitle: "Unlock exclusive vouchers and cashbacks on every top-up.",
+        );
+      default:
+        return Container(color: colorScheme.primary);
+    }
+  }
+
+  Widget _buildSlideBase({
+    required Color color1,
+    required Color color2,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [color1, color2],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            right: -20,
+            bottom: -20,
+            child: Icon(icon, size: 180, color: Colors.white.withOpacity(0.08)),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(25, 60, 25, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: Colors.white.withOpacity(0.9), size: 32),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: 220,
+                  child: Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

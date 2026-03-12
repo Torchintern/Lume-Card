@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
@@ -18,6 +19,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> with SingleTick
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
   late TabController _tabController;
+  late PageController _headerPageController;
+  Timer? _headerAutoScrollTimer;
+  int _currentHeaderPage = 0;
 
   @override
   void initState() {
@@ -31,11 +35,26 @@ class _TransactionsScreenState extends State<TransactionsScreen> with SingleTick
         setState(() {}); // Repaint filters layout 
       }
     });
+    _headerPageController = PageController(initialPage: 400);
+    _startHeaderAutoScroll();
     _fetchTransactions();
+  }
+
+  void _startHeaderAutoScroll() {
+    _headerAutoScrollTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
+      if (_headerPageController.hasClients) {
+        _headerPageController.nextPage(
+          duration: const Duration(milliseconds: 1000),
+          curve: Curves.easeInOutCubic,
+        );
+      }
+    });
   }
 
   @override
   void dispose() {
+    _headerAutoScrollTimer?.cancel();
+    _headerPageController.dispose();
     _tabController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -140,19 +159,53 @@ class _TransactionsScreenState extends State<TransactionsScreen> with SingleTick
                   background: Stack(
                     fit: StackFit.expand,
                     children: [
+                      // Dynamic Animated Background
+                      PageView.builder(
+                        controller: _headerPageController,
+                        onPageChanged: (index) {
+                          setState(() {
+                            _currentHeaderPage = index % 3;
+                          });
+                        },
+                        itemBuilder: (context, index) {
+                          final int realIndex = index % 3;
+                          return _buildHeaderSlide(realIndex, colorScheme);
+                        },
+                      ),
+                      
+                      // Overlay Gradient for text readability
                       Container(
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
-                            colors: [colorScheme.primary, colorScheme.secondary],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
+                            colors: [
+                              Colors.black.withOpacity(0.35),
+                              Colors.transparent,
+                            ],
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.topCenter,
                           ),
                         ),
                       ),
+
+                      // Indicators
                       Positioned(
-                        bottom: 0,
-                        right: 20,
-                        child: Icon(Icons.history_rounded, size: 120, color: Colors.white.withValues(alpha: 0.1)),
+                        top: MediaQuery.of(context).padding.top + 20,
+                        right: 25,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: List.generate(3, (index) {
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 300),
+                              margin: const EdgeInsets.only(left: 4),
+                              height: 4,
+                              width: _currentHeaderPage == index ? 12 : 4,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(_currentHeaderPage == index ? 0.9 : 0.4),
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            );
+                          }),
+                        ),
                       ),
                     ],
                   ),
@@ -716,6 +769,96 @@ class _TransactionsScreenState extends State<TransactionsScreen> with SingleTick
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderSlide(int index, ColorScheme colorScheme) {
+    switch (index) {
+      case 0:
+        return _buildSlideBase(
+          color1: colorScheme.primary,
+          color2: colorScheme.secondary,
+          icon: Icons.insights_rounded,
+          title: "Spending Analysis",
+          subtitle: "Track where your money goes across all your expenses.",
+        );
+      case 1:
+        return _buildSlideBase(
+          color1: const Color(0xFF1E1B4B),
+          color2: const Color(0xFF4338CA),
+          icon: Icons.credit_card_rounded,
+          title: "Card Management",
+          subtitle: "Quickly view and filter transactions for your Virtual Card.",
+        );
+      case 2:
+        return _buildSlideBase(
+          color1: const Color(0xFF0F172A),
+          color2: const Color(0xFF334155),
+          icon: Icons.directions_bus_rounded,
+          title: "Transit History",
+          subtitle: "Effortlessly track your NCMC and transit spends.",
+        );
+      default:
+        return Container(color: colorScheme.primary);
+    }
+  }
+
+  Widget _buildSlideBase({
+    required Color color1,
+    required Color color2,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [color1, color2],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            right: -20,
+            bottom: -20,
+            child: Icon(icon, size: 180, color: Colors.white.withOpacity(0.08)),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(25, 60, 25, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: Colors.white.withOpacity(0.9), size: 32),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: 220,
+                  child: Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

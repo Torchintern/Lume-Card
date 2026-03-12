@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
@@ -22,6 +23,17 @@ class _SetMandateScreenState extends State<SetMandateScreen> {
   final TextEditingController _thresholdController = TextEditingController();
   final TextEditingController _thresholdRechargeController = TextEditingController();
 
+  // ================= HEADER CAROUSEL =================
+  late PageController _headerPageController;
+  Timer? _headerAutoScrollTimer;
+  int _currentHeaderPage = 0;
+
+  // ================= SCROLL & FOCUS =================
+  final ScrollController _scrollController = ScrollController();
+  final FocusNode _weeklyFocusNode = FocusNode();
+  final FocusNode _thresholdFocusNode = FocusNode();
+  final FocusNode _thresholdRechargeFocusNode = FocusNode();
+
   final List<String> _days = [
     'Monday', 'Tuesday', 'Wednesday', 'Thursday',
     'Friday', 'Saturday', 'Sunday'
@@ -33,6 +45,39 @@ class _SetMandateScreenState extends State<SetMandateScreen> {
     _weeklyRechargeController.addListener(_evalButtonState);
     _thresholdController.addListener(_evalButtonState);
     _thresholdRechargeController.addListener(_evalButtonState);
+    _headerPageController = PageController(initialPage: 400);
+    _startHeaderAutoScroll();
+
+    // Auto-scroll on focus
+    _weeklyFocusNode.addListener(() => _scrollToField(_weeklyFocusNode));
+    _thresholdFocusNode.addListener(() => _scrollToField(_thresholdFocusNode));
+    _thresholdRechargeFocusNode
+        .addListener(() => _scrollToField(_thresholdRechargeFocusNode));
+  }
+
+  void _scrollToField(FocusNode node) {
+    if (node.hasFocus) {
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.easeOutCubic,
+          );
+        }
+      });
+    }
+  }
+
+  void _startHeaderAutoScroll() {
+    _headerAutoScrollTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
+      if (_headerPageController.hasClients) {
+        _headerPageController.nextPage(
+          duration: const Duration(milliseconds: 1000),
+          curve: Curves.easeInOutCubic,
+        );
+      }
+    });
   }
 
   void _evalButtonState() {
@@ -41,12 +86,20 @@ class _SetMandateScreenState extends State<SetMandateScreen> {
 
   @override
   void dispose() {
+    _headerAutoScrollTimer?.cancel();
+    _headerPageController.dispose();
     _weeklyRechargeController.removeListener(_evalButtonState);
     _thresholdController.removeListener(_evalButtonState);
     _thresholdRechargeController.removeListener(_evalButtonState);
     _weeklyRechargeController.dispose();
     _thresholdController.dispose();
     _thresholdRechargeController.dispose();
+
+    _scrollController.dispose();
+    _weeklyFocusNode.dispose();
+    _thresholdFocusNode.dispose();
+    _thresholdRechargeFocusNode.dispose();
+
     super.dispose();
   }
 
@@ -63,231 +116,327 @@ class _SetMandateScreenState extends State<SetMandateScreen> {
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      body: Column(
-        children: [
-          // Fixed Premium Header
-          Container(
-            height: size.height * 0.25,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [colorScheme.primary, colorScheme.secondary],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                SafeArea(
-                  bottom: false,
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        top: 10,
-                        left: 12,
-                        child: IconButton(
-                          icon: Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.2),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.5),
-                                width: 1.5,
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.arrow_back_rounded,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                          onPressed: () => Navigator.pop(context, _needsRefresh),
-                        ),
-                      ),
-                      Positioned(
-                        top: 10,
-                        right: 12,
-                        child: TextButton(
-                          onPressed: () async {
-                            final refresh = await Navigator.pushNamed(context, '/mandates');
-                            if (refresh == true) {
-                              setState(() => _needsRefresh = true);
-                            }
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: Colors.white.withValues(alpha: 0.4)),
-                            ),
-                            child: const Text(
-                              "View Mandates",
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const Positioned(
-                        bottom: 50,
-                        left: 20,
-                        child: Text(
-                          "Mandate Setup",
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 32,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -1.2,
-                          ),
-                        ),
-                      ),
-                    ],
+      body: CustomScrollView(
+        controller: _scrollController,
+        physics: const BouncingScrollPhysics(),
+        slivers: [
+          // Dynamic Premium Header
+          SliverAppBar(
+            expandedHeight: size.height * 0.35,
+            pinned: true,
+            stretch: true,
+            backgroundColor: colorScheme.primary,
+            elevation: 0,
+            leadingWidth: 70,
+            leading: Center(
+              child: IconButton(
+                icon: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.5),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.arrow_back_rounded,
+                    color: Colors.white,
+                    size: 20,
                   ),
                 ),
-              ],
+                onPressed: () => Navigator.pop(context, _needsRefresh),
+              ),
+            ),
+            actions: [
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 12.0),
+                  child: InkWell(
+                    onTap: () async {
+                      final refresh =
+                          await Navigator.pushNamed(context, '/mandates');
+                      if (refresh == true) {
+                        setState(() => _needsRefresh = true);
+                      }
+                    },
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.4)),
+                      ),
+                      child: const Text(
+                        "History",
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            flexibleSpace: FlexibleSpaceBar(
+              centerTitle: true,
+              expandedTitleScale: 1.0,
+              titlePadding: EdgeInsets.zero,
+              title: LayoutBuilder(
+                builder: (context, constraints) {
+                  final double top = constraints.biggest.height;
+                  final double expandedHeight = size.height * 0.35;
+                  final double collapsedHeight =
+                      MediaQuery.of(context).padding.top + kToolbarHeight;
+                  final double delta = expandedHeight - collapsedHeight;
+                  final double progress =
+                      ((top - collapsedHeight) / delta).clamp(0.0, 1.0);
+
+                  final double fontSize = 18 + (14 * progress);
+
+                  return Container(
+                    padding: EdgeInsets.only(
+                      left: 25 * progress,
+                      bottom: 25 * progress,
+                    ),
+                    alignment: Alignment.lerp(
+                      Alignment.center,
+                      Alignment.bottomLeft,
+                      progress,
+                    ),
+                    child: Text(
+                      "Mandate Setup",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.5 * progress,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              background: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Dynamic Animated Background
+                  PageView.builder(
+                    controller: _headerPageController,
+                    onPageChanged: (index) {
+                      setState(() {
+                        _currentHeaderPage = index % 3;
+                      });
+                    },
+                    itemBuilder: (context, index) {
+                      final int realIndex = index % 3;
+                      return _buildHeaderSlide(realIndex, colorScheme);
+                    },
+                  ),
+
+                  // Overlay Gradient
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.black.withOpacity(0.35),
+                          Colors.transparent,
+                        ],
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                      ),
+                    ),
+                  ),
+
+                  // Indicators
+                  Positioned(
+                    top: MediaQuery.of(context).padding.top + 25,
+                    right: 25,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: List.generate(3, (index) {
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          margin: const EdgeInsets.only(left: 4),
+                          height: 4,
+                          width: _currentHeaderPage == index ? 12 : 4,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(
+                                _currentHeaderPage == index ? 0.9 : 0.4),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        );
+                      }),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(20),
+              child: Container(
+                height: 20,
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(32),
+                    topRight: Radius.circular(32),
+                  ),
+                ),
+              ),
             ),
           ),
 
-          // Content Area with rounded top
-          Expanded(
+          // Content Area
+          SliverToBoxAdapter(
             child: Container(
-              width: double.infinity,
-              transform: Matrix4.translationValues(0, -25, 0),
-              decoration: BoxDecoration(
-                color: colorScheme.surface,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(32),
-                  topRight: Radius.circular(32),
-                ),
-              ),
+              color: colorScheme.surface,
               child: Column(
                 children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
-                      physics: const BouncingScrollPhysics(),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Segmented Control
-                          Container(
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: unselectedTabBg,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: GestureDetector(
-                                    onTap: () => setState(() => _tabIndex = 0),
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: _tabIndex == 0 ? selectedTabColor : Colors.transparent,
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      alignment: Alignment.center,
-                                      child: Text(
-                                        "Frequency",
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 15,
-                                          color: _tabIndex == 0 ? Colors.white : unselectedTabTextColor,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                Expanded(
-                                  child: GestureDetector(
-                                    onTap: () => setState(() => _tabIndex = 1),
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: _tabIndex == 1 ? selectedTabColor : Colors.transparent,
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      alignment: Alignment.center,
-                                      child: Text(
-                                        "Threshold",
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 15,
-                                          color: _tabIndex == 1 ? Colors.white : unselectedTabTextColor,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Segmented Control
+                        Container(
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: unselectedTabBg,
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          const SizedBox(height: 32),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => setState(() => _tabIndex = 0),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: _tabIndex == 0
+                                          ? selectedTabColor
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Text(
+                                      "Frequency",
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 15,
+                                        color: _tabIndex == 0
+                                            ? Colors.white
+                                            : unselectedTabTextColor,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => setState(() => _tabIndex = 1),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: _tabIndex == 1
+                                          ? selectedTabColor
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Text(
+                                      "Threshold",
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 15,
+                                        color: _tabIndex == 1
+                                            ? Colors.white
+                                            : unselectedTabTextColor,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 32),
 
-                          if (_tabIndex == 0) _buildFrequencyTab(isDark, selectedTabColor, unselectedTabBg, unselectedTabTextColor)
-                          else _buildThresholdTab(isDark, colorScheme),
-                          
-                          const SizedBox(height: 32),
-                        ],
-                      ),
+                        if (_tabIndex == 0)
+                          _buildFrequencyTab(isDark, selectedTabColor,
+                              unselectedTabBg, unselectedTabTextColor)
+                        else
+                          _buildThresholdTab(isDark, colorScheme),
+
+                        const SizedBox(height: 120), // Spacer for bottom button
+                      ],
                     ),
                   ),
-
-                  // Bottom Continue Button
-                  Padding(
-                    padding: EdgeInsets.fromLTRB(24, 0, 24, MediaQuery.of(context).padding.bottom + 24),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: ListenableBuilder(
-                        listenable: Listenable.merge([
-                          _weeklyRechargeController,
-                          _thresholdController,
-                          _thresholdRechargeController
-                        ]),
-                        builder: (context, _) {
-                          final canSubmit = _canSubmit();
-                          return ElevatedButton(
-                            onPressed: (_isProcessing || !canSubmit) ? null : _submitMandate,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: (_isProcessing || !canSubmit)
-                                  ? (isDark ? Colors.white12 : const Color(0xFFD1D5DB))
-                                  : colorScheme.primary,
-                              foregroundColor: (_isProcessing || !canSubmit)
-                                  ? (isDark ? Colors.white38 : const Color(0xFF6B7280))
-                                  : colorScheme.onPrimary,
-                              padding: const EdgeInsets.symmetric(vertical: 18),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              elevation: 0,
-                            ),
-                            child: _isProcessing
-                                ? const SizedBox(
-                                    height: 20,
-                                    width: 20,
-                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                  )
-                                : const Text(
-                                    "Continue",
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                          );
-                        },
-                      ),
-                    ),
-                  )
                 ],
               ),
             ),
           ),
         ],
+      ),
+      bottomSheet: Container(
+        padding: EdgeInsets.fromLTRB(
+            24, 16, 24, MediaQuery.of(context).padding.bottom + 24),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          border: Border(
+            top: BorderSide(
+              color: isDark ? Colors.white12 : Colors.black.withOpacity(0.05),
+              width: 1,
+            ),
+          ),
+        ),
+        child: SizedBox(
+          width: double.infinity,
+          child: ListenableBuilder(
+            listenable: Listenable.merge([
+              _weeklyRechargeController,
+              _thresholdController,
+              _thresholdRechargeController
+            ]),
+            builder: (context, _) {
+              final canSubmit = _canSubmit();
+              return ElevatedButton(
+                onPressed:
+                    (_isProcessing || !canSubmit) ? null : _submitMandate,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: (_isProcessing || !canSubmit)
+                      ? (isDark ? Colors.white12 : const Color(0xFFD1D5DB))
+                      : colorScheme.primary,
+                  foregroundColor: (_isProcessing || !canSubmit)
+                      ? (isDark ? Colors.white38 : const Color(0xFF6B7280))
+                      : colorScheme.onPrimary,
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 0,
+                ),
+                child: _isProcessing
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text(
+                        "Continue",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+              );
+            },
+          ),
+        ),
       ),
     );
   }
@@ -736,17 +885,9 @@ class _SetMandateScreenState extends State<SetMandateScreen> {
           ),
         ],
 
-        const SizedBox(height: 32),
-        Text(
-          "Recharge amount",
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            color: isDark ? Colors.white.withValues(alpha: 0.9) : const Color(0xFF1F2937),
-          ),
-        ),
         const SizedBox(height: 8),
-        _buildTextField("This amount will be added to your card", _weeklyRechargeController, isDark),
+        _buildTextField(
+            "This amount will be added to your card", _weeklyRechargeController, isDark, _weeklyFocusNode),
       ],
     );
   }
@@ -764,7 +905,7 @@ class _SetMandateScreenState extends State<SetMandateScreen> {
           ),
         ),
         const SizedBox(height: 8),
-        _buildTextField("", _thresholdController, isDark),
+        _buildTextField("", _thresholdController, isDark, _thresholdFocusNode),
 
         const SizedBox(height: 24),
         Text(
@@ -776,7 +917,7 @@ class _SetMandateScreenState extends State<SetMandateScreen> {
           ),
         ),
         const SizedBox(height: 8),
-        _buildTextField("This amount will be added to your card", _thresholdRechargeController, isDark),
+        _buildTextField("This amount will be added to your card", _thresholdRechargeController, isDark, _thresholdRechargeFocusNode),
 
         const SizedBox(height: 24),
         ListenableBuilder(
@@ -799,10 +940,13 @@ class _SetMandateScreenState extends State<SetMandateScreen> {
     );
   }
 
-  Widget _buildTextField(String hint, TextEditingController controller, bool isDark) {
+  Widget _buildTextField(String hint, TextEditingController controller,
+      bool isDark, FocusNode focusNode) {
     return TextField(
       controller: controller,
+      focusNode: focusNode,
       keyboardType: TextInputType.number,
+      scrollPadding: const EdgeInsets.only(bottom: 200),
       style: TextStyle(
         fontSize: 18,
         fontWeight: FontWeight.w800,
@@ -839,6 +983,95 @@ class _SetMandateScreenState extends State<SetMandateScreen> {
           ),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      ),
+    );
+  }
+  Widget _buildHeaderSlide(int index, ColorScheme colorScheme) {
+    switch (index) {
+      case 0:
+        return _buildSlideBase(
+          color1: colorScheme.primary,
+          color2: colorScheme.secondary,
+          icon: Icons.auto_mode_rounded,
+          title: "Auto Top-Up",
+          subtitle: "Set it once and never worry about low balance again.",
+        );
+      case 1:
+        return _buildSlideBase(
+          color1: const Color(0xFF1E1B4B),
+          color2: const Color(0xFF4338CA),
+          icon: Icons.timer_rounded,
+          title: "Flexible Rules",
+          subtitle: "Choose between scheduled frequency or balance thresholds.",
+        );
+      case 2:
+        return _buildSlideBase(
+          color1: const Color(0xFF0F172A),
+          color2: const Color(0xFF334155),
+          icon: Icons.security_rounded,
+          title: "Safe & Secure",
+          subtitle: "Manage your mandates with full control and transparency.",
+        );
+      default:
+        return Container(color: colorScheme.primary);
+    }
+  }
+
+  Widget _buildSlideBase({
+    required Color color1,
+    required Color color2,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [color1, color2],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            right: -20,
+            bottom: -20,
+            child: Icon(icon, size: 180, color: Colors.white.withOpacity(0.08)),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(25, 60, 25, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: Colors.white.withOpacity(0.9), size: 32),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: 220,
+                  child: Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -231,43 +231,43 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   }
 
   Widget _buildVirtualID(ColorScheme colorScheme) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    // Using premium dashboard colors
+    final Color cardBg = isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC);
+    final Color textColor = isDark ? Colors.white : const Color(0xFF1E293B);
+    final Color subTextColor = isDark ? Colors.white.withOpacity(0.7) : const Color(0xFF475569);
+    
     return SlideTransition(
       position: _slideAnimation,
       child: Container(
         height: 220,
         width: double.infinity,
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [colorScheme.primary, colorScheme.secondary],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
+          color: cardBg,
           borderRadius: BorderRadius.circular(28),
           boxShadow: [
             BoxShadow(
-              color: colorScheme.primary.withOpacity(0.3),
+              color: Colors.black.withOpacity(isDark ? 0.3 : 0.08),
               blurRadius: 20,
               offset: const Offset(0, 10),
             ),
           ],
+          border: Border.all(
+            color: colorScheme.primary.withOpacity(0.2),
+            width: 1.2,
+          ),
         ),
+        clipBehavior: Clip.antiAlias,
         child: Stack(
           children: [
-            // Decorative shapes
-            Positioned(
-              right: -20,
-              top: -20,
-              child: CircleAvatar(
-                radius: 60,
-                backgroundColor: Colors.white.withOpacity(0.1),
-              ),
-            ),
-            Positioned(
-              left: -10,
-              bottom: -10,
-              child: CircleAvatar(
-                radius: 40,
-                backgroundColor: Colors.white.withOpacity(0.05),
+            // Student-themed background painter
+            Positioned.fill(
+              child: CustomPaint(
+                painter: StudentIdBackgroundPainter(
+                  color: colorScheme.primary,
+                  isDark: isDark,
+                ),
               ),
             ),
             
@@ -279,16 +279,30 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Icon(Icons.credit_card_rounded, color: Colors.white, size: 24),
+                      Text(
+                        "LUME IDENTITY",
+                        style: TextStyle(
+                          color: colorScheme.primary.withOpacity(0.8), 
+                          fontSize: 12, 
+                          fontWeight: FontWeight.w900, 
+                          letterSpacing: 1.5
+                        ),
+                      ),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
+                          color: colorScheme.primary.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: colorScheme.primary.withOpacity(0.2)),
                         ),
-                        child: const Text(
-                          "STUDENT ID",
-                          style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1),
+                        child: Text(
+                          "STUDENT",
+                          style: TextStyle(
+                            color: colorScheme.primary, 
+                            fontSize: 10, 
+                            fontWeight: FontWeight.w900, 
+                            letterSpacing: 1
+                          ),
                         ),
                       ),
                     ],
@@ -297,12 +311,12 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   Row(
                     children: [
                       Container(
-                        width: 70,
-                        height: 70,
+                        width: 80,
+                        height: 80,
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
+                          color: colorScheme.primary.withOpacity(0.05),
                           shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
+                          border: Border.all(color: colorScheme.primary.withOpacity(0.3), width: 2),
                           image: _profileImageUrl != null 
                             ? DecorationImage(
                                 image: NetworkImage("${ApiService.baseUrl}/uploads/profile_pics/$_profileImageUrl"),
@@ -314,7 +328,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                           ? Center(
                               child: Text(
                                 _getInitials(_userName),
-                                style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                                style: TextStyle(
+                                  color: colorScheme.primary, 
+                                  fontSize: 28, 
+                                  fontWeight: FontWeight.w900
+                                ),
                               ),
                             )
                           : null,
@@ -329,53 +347,80 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                               _userName,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white, 
-                                fontSize: 18, 
-                                fontWeight: FontWeight.w800, 
+                              style: TextStyle(
+                                color: textColor, 
+                                fontSize: 20, 
+                                fontWeight: FontWeight.w900, 
                                 height: 1.1,
-                                letterSpacing: -0.2
+                                letterSpacing: -0.5
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primary.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                _userRegNo,
+                                style: TextStyle(
+                                  color: colorScheme.primary, 
+                                  fontSize: 13, 
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.5
+                                ),
                               ),
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              "Reg No: $_userRegNo",
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.9), 
-                                fontSize: 12, 
-                                fontWeight: FontWeight.w500
-                              ),
-                            ),
-                            const SizedBox(height: 2),
                             Text(
                               _institute,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.7), 
-                                fontSize: 10, 
-                                fontWeight: FontWeight.w400
+                                color: subTextColor, 
+                                fontSize: 11, 
+                                fontWeight: FontWeight.w600
                               ),
                             ),
                           ],
                         ),
                       ),
-                      // Real QR Code on Card
+                      // Glassmorphism QR Container
                       InkWell(
                         onTap: _showQRDialog,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(16),
                         child: Container(
-                          width: 55,
-                          height: 55,
-                          padding: const EdgeInsets.all(4),
+                          width: 65,
+                          height: 65,
+                          padding: const EdgeInsets.all(6),
                           decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(8),
+                            color: isDark ? Colors.white.withOpacity(0.05) : Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: colorScheme.primary.withOpacity(0.2),
+                              width: 1.2,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.05),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
                           ),
                           child: QrImageView(
                             data: "Name: $_userName\nReg No: $_userRegNo\nInstitute: $_institute\nDept: $_department\nEmail: $_userEmail",
                             version: QrVersions.auto,
-                            size: 55.0,
+                            size: 65.0,
+                            eyeStyle: QrEyeStyle(
+                              eyeShape: QrEyeShape.square,
+                              color: colorScheme.primary,
+                            ),
+                            dataModuleStyle: QrDataModuleStyle(
+                              dataModuleShape: QrDataModuleShape.square,
+                              color: colorScheme.primary.withOpacity(0.8),
+                            ),
                           ),
                         ),
                       ),
@@ -463,5 +508,91 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         ],
       ),
     );
+  }
+}
+
+class StudentIdBackgroundPainter extends CustomPainter {
+  final Color color;
+  final bool isDark;
+
+  StudentIdBackgroundPainter({required this.color, required this.isDark});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // 1. Draw Geometric Pattern (Matching Dashboard CardPatternPainter)
+    final patternPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = color.withOpacity(isDark ? 0.08 : 0.05);
+
+    final path = Path();
+    for (var i = 0; i < 6; i++) {
+      path.moveTo(size.width * (0.15 * i), 0);
+      path.lineTo(size.width, size.height * (1 - 0.15 * i));
+    }
+    canvas.drawPath(path, patternPaint);
+
+    // 2. Draw subtle student-related icons
+    final iconPaint = Paint()
+      ..color = color.withOpacity(isDark ? 0.1 : 0.06)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    for (int i = 0; i < 4; i++) {
+      final double xPos = size.width * (0.15 + (i % 2) * 0.65);
+      final double yPos = size.height * (0.2 + i * 0.2);
+
+      canvas.save();
+      canvas.translate(xPos, yPos);
+      canvas.rotate(0.15 * (i + 1));
+
+      if (i % 2 == 0) {
+        // Graduation Cap
+        final capPath = Path();
+        capPath.moveTo(-12, 0);
+        capPath.lineTo(0, -6);
+        capPath.lineTo(12, 0);
+        capPath.lineTo(0, 6);
+        capPath.close();
+        canvas.drawPath(capPath, iconPaint);
+        canvas.drawLine(const Offset(0, 6), const Offset(0, 12), iconPaint);
+      } else {
+        // Book
+        canvas.drawRect(const Rect.fromLTWH(-10, -8, 20, 16), iconPaint);
+        canvas.drawLine(const Offset(0, -8), const Offset(0, 8), iconPaint);
+      }
+
+      canvas.restore();
+    }
+
+    // 3. Premium abstract accents
+    final accentPaint = Paint()
+      ..color = color.withOpacity(isDark ? 0.06 : 0.03)
+      ..style = PaintingStyle.fill;
+
+    // Top Right Accent
+    final accentPath = Path();
+    accentPath.moveTo(size.width * 0.6, 0);
+    accentPath.quadraticBezierTo(
+      size.width * 0.8,
+      size.height * 0.3,
+      size.width,
+      size.height * 0.1,
+    );
+    accentPath.lineTo(size.width, 0);
+    accentPath.close();
+    canvas.drawPath(accentPath, accentPaint);
+
+    // Bottom Circle
+    canvas.drawCircle(
+      Offset(size.width * 0.05, size.height * 0.9),
+      80,
+      accentPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant StudentIdBackgroundPainter oldDelegate) {
+    return oldDelegate.color != color || oldDelegate.isDark != isDark;
   }
 }

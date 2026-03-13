@@ -95,6 +95,15 @@ class _StudentConfirmScreenState extends State<StudentConfirmScreen> with Single
     final bool isForgotPin = args["isForgotPin"] ?? false;
     final colorScheme = Theme.of(context).colorScheme;
 
+    final String batchStart = student["batch_start_year"]?.toString() ?? "";
+    final String batchEnd = student["batch_end_year"]?.toString() ?? "";
+    String batchString = "N/A";
+    if (batchStart.isNotEmpty && batchEnd.isNotEmpty) {
+      batchString = "$batchStart - $batchEnd";
+    } else if (batchStart.isNotEmpty) {
+      batchString = batchStart;
+    }
+
     return Scaffold(
       backgroundColor: colorScheme.surface,
       body: CustomScrollView(
@@ -188,6 +197,8 @@ class _StudentConfirmScreenState extends State<StudentConfirmScreen> with Single
                               _buildInfoRow("Department", student["department"] ?? "N/A", Icons.school_rounded, colorScheme),
                               const Divider(height: 1),
                               _buildInfoRow("Roll Number", student["reg_no"] ?? "N/A", Icons.badge_rounded, colorScheme),
+                              const Divider(height: 1),
+                              _buildInfoRow("Batch", batchString, Icons.calendar_today_rounded, colorScheme),
                             ],
                           ),
                         ),

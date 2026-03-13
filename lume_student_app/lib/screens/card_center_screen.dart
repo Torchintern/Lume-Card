@@ -80,6 +80,10 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
 
   Future<void> _handlePinAction() async {
     if (_authToken == null) return;
+    if (_orderStatus != "RECEIVED") {
+      _showErrorSnackBar("Physical card must be delivered to manage PIN.");
+      return;
+    }
 
     if (!isPinSet) {
       // Direct Set PIN flow
@@ -1563,7 +1567,7 @@ class _CardCenterScreenState extends State<CardCenterScreen> {
                         : "Setup your card PIN securely",
                     colorScheme,
                     onTap: _handlePinAction,
-                    isEnabled: true,
+                    isEnabled: _orderStatus == "RECEIVED",
                   ),
                   _buildActionTile(
                     isLocked ? Icons.lock_open_rounded : Icons.lock_rounded,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
@@ -10,10 +11,11 @@ import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'dart:ui' as ui;
 import 'package:nfc_manager/nfc_manager.dart';
+import 'package:geolocator/geolocator.dart';
 import '../services/api_service.dart';
 import '../utils/campus_app_picker.dart';
 
-enum WeatherCondition { sunny, cloudy, rainy, night }
+enum WeatherCondition { sunny, cloudy, rainy, night, snow, thunder, sunrise, sunset }
 
 class WeatherTheme {
   final List<Color> gradientColors;
@@ -80,6 +82,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   double _ncmcBalance = 0.0;
   double _ncmcUnclaimedBalance = 0.0;
   String? _ncmcLastUpdated;
+  bool _isPinSet = false;
   bool _isBalanceVisible = false;
   bool _isNcmcBalanceVisible = false;
   bool _isNcmcPrimary = false; // New: Tracks which balance is in front
@@ -125,6 +128,30 @@ class _DashboardScreenState extends State<DashboardScreen>
       label: "Clear Night",
       greetingSuffix: "🌙",
     ),
+    WeatherCondition.snow: const WeatherTheme(
+      gradientColors: [Color(0xFFE2E8F0), Color(0xFFCBD5E1), Color(0xFF94A3B8)],
+      icon: Icons.ac_unit_rounded,
+      label: "Snowy",
+      greetingSuffix: "❄️",
+    ),
+    WeatherCondition.thunder: const WeatherTheme(
+      gradientColors: [Color(0xFF1E1B4B), Color(0xFF312E81), Color(0xFF4338CA)],
+      icon: Icons.thunderstorm_rounded,
+      label: "Thunderstorm",
+      greetingSuffix: "⚡",
+    ),
+    WeatherCondition.sunrise: const WeatherTheme(
+      gradientColors: [Color(0xFFFF7E5F), Color(0xFFFEB47B)],
+      icon: Icons.wb_twilight_rounded,
+      label: "Sunrise",
+      greetingSuffix: "🌅",
+    ),
+    WeatherCondition.sunset: const WeatherTheme(
+      gradientColors: [Color(0xFF4B6CB7), Color(0xFF182848)],
+      icon: Icons.wb_twilight_rounded,
+      label: "Sunset",
+      greetingSuffix: "🌇",
+    ),
   };
 
   @override
@@ -164,11 +191,14 @@ class _DashboardScreenState extends State<DashboardScreen>
     _startHeaderAutoScroll();
     _animationController.forward();
     _loadUserProfile();
-    _fetchWeather();
+    CampusAppPicker.preload();
     _startClock();
     _startAutoRefresh();
     _checkNfcAvailability();
-    CampusAppPicker.preload();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _fetchWeather();
+    });
   }
 
   void _startHeaderAutoScroll() {
@@ -272,12 +302,17 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   void _startAutoRefresh() {
-    // Refresh mandate/wallet data every 30 seconds to catch automated updates
+    // Refresh mandate/wallet data every 30 seconds
     _refreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (mounted && (_tabController.index == 1 || _tabController.index == 3)) { // Specifically refresh more often on Card and Transit tab
+      if (mounted && (_tabController.index == 1 || _tabController.index == 3)) {
         _loadUserProfile();
-      } else if (mounted && timer.tick % 4 == 0) { // Every 2 minutes on other tabs
+      } else if (mounted && timer.tick % 4 == 0) {
         _loadUserProfile();
+      }
+      
+      // Refresh weather every 30 minutes (60 ticks of 30 seconds)
+      if (mounted && timer.tick % 60 == 0) {
+        _fetchWeather();
       }
     });
   }
@@ -392,6 +427,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                     lockStatus == "BLOCKED" || cardState == "BLOCKED";
                 _isCardFreezed = cardRes["is_freezed"] == true;
                 _orderStatus = cardRes["order_status"] ?? "NOT_REQUESTED";
+                _isPinSet = cardRes["is_pin_set"] == true;
                 _cardBalance = (cardRes["balance"] ?? 0.0).toDouble();
                 _ncmcBalance = (cardRes["ncmc_balance"] ?? cardRes["transit_balance"] ?? 0.0).toDouble();
                 _ncmcUnclaimedBalance = (cardRes["ncmc_unclaimed_balance"] ?? 0.0).toDouble();
@@ -788,62 +824,154 @@ class _DashboardScreenState extends State<DashboardScreen>
     return DateFormat('EEEE, dd MMMM yyyy').format(DateTime.now());
   }
 
-  // Real weather fetch from Open-Meteo
+  // Real weather fetch using Geolocator and Open-Meteo
   Future<void> _fetchWeather() async {
     try {
-      // Default coordinate (e.g., London 51.5074, -0.1278)
-      // In a real app, you'd use geolocator to get user's position
-      const double lat = 12.9716; // Example: Bangalore
-      const double lon = 77.5946;
+      Position? position;
+      try {
+        // Reduced priority for faster fix, with timeout
+        position = await _determinePosition().timeout(const Duration(seconds: 10));
+      } catch (e) {
+        debugPrint("Weather: Error/Timeout getting position: $e");
+      }
+      
+      double lat = 12.9716; // Fallback: Bangalore
+      double lon = 77.5946;
+
+      if (position != null) {
+        lat = position.latitude;
+        lon = position.longitude;
+      }
 
       final url = Uri.parse(
-        "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current_weather=true",
+        "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current_weather=true&daily=sunrise,sunset&timezone=auto",
       );
 
-      final response = await http.get(url);
+      final response = await http.get(url).timeout(const Duration(seconds: 8));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final current = data["current_weather"];
-        final double temp = current["temperature"];
-        final int code = current["weathercode"];
+        final double temp = current["temperature"] ?? 0.0;
+        final int code = current["weathercode"] ?? 0;
+        final int isDay = current["is_day"] ?? 1;
+        
+        // Sunrise/Sunset times
+        String? sunriseStr;
+        String? sunsetStr;
+        if (data["daily"] != null) {
+          sunriseStr = data["daily"]["sunrise"]?[0];
+          sunsetStr = data["daily"]["sunset"]?[0];
+        }
 
         if (mounted) {
           setState(() {
             _weatherTemp = "${temp.toStringAsFixed(1)}°C";
-            _currentCondition = _mapWeatherCode(code);
+            _currentCondition = _mapWeatherCodeDetailed(code, isDay == 0, sunriseStr, sunsetStr);
             _weatherDesc = _weatherThemes[_currentCondition]!.label;
             _weatherIcon = _weatherThemes[_currentCondition]!.icon;
           });
         }
+      } else {
+        throw Exception("Weather API Error: ${response.statusCode}");
       }
     } catch (e) {
       debugPrint("Error fetching weather: $e");
-      // Fallback
+      // Hard fallback so it's not stuck on "Fetching..."
       if (mounted) {
         setState(() {
           _weatherTemp = "28°C";
-          _weatherDesc = "Cloudy";
+          _weatherDesc = "Sunny";
+          _currentCondition = WeatherCondition.sunny;
+          _weatherIcon = _weatherThemes[_currentCondition]!.icon;
         });
       }
     }
   }
 
-  WeatherCondition _mapWeatherCode(int code) {
-    final hour = DateTime.now().hour;
-    bool isNight = hour >= 19 || hour < 6;
+  Future<Position?> _determinePosition() async {
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      
+      if (permission == LocationPermission.denied) {
+        // This is where it asks the user for permission
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          debugPrint("Location permissions are denied.");
+          return null;
+        }
+      }
 
-    // WMO Weather interpretation codes (WW)
-    if (code >= 61 && code <= 99) return WeatherCondition.rainy;
-    if (code >= 1 && code <= 3)
-      return isNight ? WeatherCondition.night : WeatherCondition.cloudy;
-    if (code == 0)
-      return isNight ? WeatherCondition.night : WeatherCondition.sunny;
-    return WeatherCondition.cloudy;
+      if (permission == LocationPermission.deniedForever) {
+        debugPrint("Location permissions are permanently denied.");
+        return null;
+      }
+
+      // Check service after permission to be more proactive
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        debugPrint("Location services are disabled.");
+        return null;
+      }
+
+      // Try last known position first (instant)
+      Position? lastKnown = await Geolocator.getLastKnownPosition();
+      if (lastKnown != null) return lastKnown;
+
+      // Get current position with balanced accuracy for speed
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 8),
+      );
+    } catch (e) {
+      debugPrint("Location helper error: $e");
+      return null;
+    }
+  }
+
+  WeatherCondition _mapWeatherCodeDetailed(int code, bool isNight, String? sunrise, String? sunset) {
+    final now = DateTime.now();
+
+    // Check for Sunrise/Sunset periods (approx 30 mins window)
+    try {
+      if (sunrise != null) {
+        final riseTime = DateTime.parse(sunrise);
+        if (now.isAfter(riseTime.subtract(const Duration(minutes: 30))) &&
+            now.isBefore(riseTime.add(const Duration(minutes: 30)))) {
+          return WeatherCondition.sunrise;
+        }
+      }
+      if (sunset != null) {
+        final setTime = DateTime.parse(sunset);
+        if (now.isAfter(setTime.subtract(const Duration(minutes: 30))) &&
+            now.isBefore(setTime.add(const Duration(minutes: 30)))) {
+          return WeatherCondition.sunset;
+        }
+      }
+    } catch (_) {}
+
+    // Thunderstorm
+    if (code >= 95 && code <= 99) return WeatherCondition.thunder;
+
+    // Snow
+    if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) return WeatherCondition.snow;
+
+    // Rainy
+    if ((code >= 51 && code <= 65) || (code >= 80 && code <= 82)) return WeatherCondition.rainy;
+
+    // Clear sky and Mainly Clear
+    if (code == 0 || code == 1) return isNight ? WeatherCondition.night : WeatherCondition.sunny;
+    
+    // Partly cloudy, and overcast
+    if (code == 2 || code == 3) return isNight ? WeatherCondition.night : WeatherCondition.cloudy;
+    
+    // Fog
+    if (code == 45 || code == 48) return isNight ? WeatherCondition.night : WeatherCondition.cloudy;
+    
+    return isNight ? WeatherCondition.night : WeatherCondition.cloudy;
   }
 
   Widget _buildDrawer(BuildContext context, ColorScheme colorScheme) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final Color dashColor = isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC);
     final Color dashBg = isDark ? const Color(0xFF0F172A) : Colors.white;
 
     // ================= STATUS UI LOGIC =================
@@ -2181,30 +2309,79 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ],
         );
+      case WeatherCondition.snow:
+        return Stack(
+          children: List.generate(
+            25,
+            (index) => Positioned(
+              top: (index * 12) % 240.0,
+              left: (index * 18) % 420.0,
+              child: Icon(
+                Icons.ac_unit_rounded,
+                size: 10 + (index % 10).toDouble(),
+                color: Colors.white.withOpacity(0.2),
+              ),
+            ),
+          ),
+        );
+      case WeatherCondition.thunder:
+        return Stack(
+          children: [
+            Positioned(
+              top: 10,
+              right: 20,
+              child: Icon(
+                Icons.thunderstorm_rounded,
+                size: 160,
+                color: Colors.white.withOpacity(0.1),
+              ),
+            ),
+            ...List.generate(
+              3,
+              (index) => Positioned(
+                top: 40 + (index * 20),
+                left: 60 + (index * 40),
+                child: Icon(
+                  Icons.bolt_rounded,
+                  size: 40,
+                  color: Colors.yellowAccent.withOpacity(0.2),
+                ),
+              ),
+            ),
+          ],
+        );
+      case WeatherCondition.sunrise:
+        return Stack(
+          children: [
+            Positioned(
+              bottom: -20,
+              left: 40,
+              child: Icon(
+                Icons.wb_twilight_rounded,
+                size: 180,
+                color: Colors.orangeAccent.withOpacity(0.2),
+              ),
+            ),
+          ],
+        );
+      case WeatherCondition.sunset:
+        return Stack(
+          children: [
+            Positioned(
+              bottom: -20,
+              right: 40,
+              child: Icon(
+                Icons.wb_twilight_rounded,
+                size: 180,
+                color: Colors.redAccent.withOpacity(0.15),
+              ),
+            ),
+          ],
+        );
     }
   }
 
-  List<Color> _getHeaderGradient(int index) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    switch (index) {
-      case 0:
-        return _weatherThemes[_currentCondition]!.gradientColors;
-      case 1: // Cashback
-        return isDark 
-            ? [const Color(0xFF1E1B4B), const Color(0xFF312E81)]
-            : [const Color(0xFF4F46E5), const Color(0xFF6366F1)];
-      case 2: // Rewards
-        return isDark
-            ? [const Color(0xFF064E3B), const Color(0xFF065F46)]
-            : [const Color(0xFF059669), const Color(0xFF10B981)];
-      case 3: // NCMC
-        return isDark
-            ? [const Color(0xFF7C2D12), const Color(0xFF9A3412)]
-            : [const Color(0xFFEA580C), const Color(0xFFF97316)];
-      default:
-        return _weatherThemes[_currentCondition]!.gradientColors;
-    }
-  }
+
 
   Widget _buildWeatherAndGreetingSlide() {
     return Stack(
@@ -2249,17 +2426,23 @@ class _DashboardScreenState extends State<DashboardScreen>
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.2,
+                        shadows: [
+                          Shadow(color: Colors.black.withOpacity(0.2), offset: const Offset(0, 1), blurRadius: 3),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       _userName,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: Colors.white,
                         fontSize: 26,
                         fontWeight: FontWeight.w900,
                         letterSpacing: -0.8,
                         height: 1.1,
+                        shadows: [
+                          Shadow(color: Colors.black.withOpacity(0.3), offset: const Offset(0, 2), blurRadius: 4),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -2304,11 +2487,14 @@ class _DashboardScreenState extends State<DashboardScreen>
                         const SizedBox(height: 6),
                         Text(
                           _weatherTemp,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Colors.white,
                             fontSize: 18,
                             fontWeight: FontWeight.w800,
                             letterSpacing: -0.5,
+                            shadows: [
+                              Shadow(color: Colors.black.withOpacity(0.1), offset: const Offset(0, 1), blurRadius: 2),
+                            ],
                           ),
                         ),
                         Text(
@@ -2317,6 +2503,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                             color: Colors.white.withOpacity(0.7),
                             fontSize: 9,
                             fontWeight: FontWeight.w600,
+                            letterSpacing: 0.5,
                           ),
                         ),
                       ],
@@ -2348,59 +2535,222 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
         ),
-        Positioned(
-          right: -30,
-          top: -30,
-          child: Icon(Icons.stars_rounded, size: 200, color: Colors.white.withOpacity(0.1)),
+        // Animated Money Background
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: _pulseController,
+            builder: (context, child) {
+              return Stack(
+                children: [
+                  // Large Pulsing Money Icon
+                  Positioned(
+                    right: -50,
+                    top: -50,
+                    child: Transform.scale(
+                      scale: 1.0 + (_pulseController.value * 0.15),
+                      child: Opacity(
+                        opacity: 0.12,
+                        child: Icon(
+                          Icons.payments_rounded,
+                          size: 280,
+                          color: Colors.greenAccent.withOpacity(0.8),
+                        ),
+                      ),
+                    ),
+                  ),
+                  // Floating Money Particles
+                  ...List.generate(6, (index) {
+                    final double progress = (_pulseController.value + (index / 6)) % 1.0;
+                    return Positioned(
+                      right: 40 + (index * 30).toDouble(),
+                      top: 10 + (progress * 100),
+                      child: Opacity(
+                        opacity: (1.0 - progress) * 0.4,
+                        child: Transform.rotate(
+                          angle: progress * 6.28,
+                          child: const Icon(
+                            Icons.attach_money_rounded,
+                            size: 24,
+                            color: Colors.greenAccent,
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+              );
+            },
+          ),
         ),
         Positioned(
           bottom: 40,
-          left: 24,
-          right: 24,
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
+          left: 20,
+          right: 20,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+              child: Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(isDark ? 0.35 : 0.25),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.25),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text(
+                              "LIMITED TIME",
+                              style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            "Upto 10% Cashback",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.5,
+                              shadows: [Shadow(color: Colors.black26, offset: Offset(0, 2), blurRadius: 4)],
+                            ),
+                          ),
+                          Text(
+                            "on your first Top-Up",
+                            style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
+                        ],
                       ),
-                      child: const Text(
-                        "LIMITED TIME",
-                        style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
-                      ),
                     ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      "Upto 100% Cashback",
-                      style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: -0.5),
-                    ),
-                    const Text(
-                      "on your first prepaid recharge",
-                      style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 16),
+                    const SizedBox(width: 12),
                     ElevatedButton(
-                      onPressed: () => _tabController.animateTo(1),
+                      onPressed: () async {
+                        final refresh = await Navigator.pushNamed(context, '/add-money');
+                        if (refresh == true) {
+                          _loadUserProfile();
+                        }
+                      },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.white,
-                        foregroundColor: Colors.indigo,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        foregroundColor: Colors.indigo.shade800,
+                        elevation: 6,
+                        shadowColor: Colors.black45,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
-                      child: const Text("Recharge Now", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                      child: const Text("Top-Up", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.account_balance_wallet_rounded, size: 100, color: Colors.white24),
-            ],
+            ),
+          ),
+        ),
+        Positioned(
+          top: 45,
+          right: 40,
+          child: Transform.rotate(
+                angle: -0.15,
+                child: Transform.translate(
+                  offset: const Offset(10, 0),
+                  child: Container(
+                    width: 140,
+                    height: 90,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF1F2937), Color(0xFF111827)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.4),
+                          blurRadius: 15,
+                          offset: const Offset(8, 8),
+                        ),
+                      ],
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.1),
+                        width: 0.5,
+                      ),
+                    ),
+                    child: Stack(
+                      children: [
+                        // Card Content
+                        Positioned(
+                          top: 10,
+                          left: 10,
+                          child: Container(
+                            width: 20,
+                            height: 15,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFFFDE68A), Color(0xFFD97706)],
+                              ),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 12,
+                          right: 12,
+                          child: Image.asset(
+                            "assets/logos/rupay.png",
+                            height: 14,
+                            color: Colors.white.withOpacity(0.9),
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 10,
+                          left: 10,
+                          child: Text(
+                            "LUME",
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.8),
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ),
+                        // Shine effect
+                        Positioned.fill(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              gradient: LinearGradient(
+                                colors: [
+                                  Colors.white.withOpacity(0.1),
+                                  Colors.transparent,
+                                  Colors.transparent,
+                                  Colors.black.withOpacity(0.1),
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+            ),
           ),
         ),
       ],
@@ -2424,79 +2774,198 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
         ),
-        // Background decorative elements
-        Positioned(
-          top: 40,
-          right: 20,
-          child: Transform.rotate(
-            angle: 0.2,
-            child: Container(
-              width: 100,
-              height: 140,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withOpacity(0.2)),
-              ),
-              child: const Center(child: Icon(Icons.card_giftcard_rounded, color: Colors.white30, size: 40)),
-            ),
-          ),
-        ),
-        Positioned(
-          top: 60,
-          right: 60,
-          child: Transform.rotate(
-            angle: -0.1,
-            child: Container(
-              width: 100,
-              height: 140,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withOpacity(0.2)),
-              ),
-              child: const Center(child: Icon(Icons.confirmation_number_rounded, color: Colors.white30, size: 40)),
-            ),
-          ),
-        ),
-        
-        Positioned(
-          bottom: 40,
-          left: 24,
-          right: 120,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                "Enjoy huge discounts",
-                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: -0.5, height: 1.1),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                "with gift cards from 200+ brands",
-                style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => _tabController.animateTo(2),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.amber,
-                  foregroundColor: Colors.black87,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: const Text("Explore Rewards", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
-              ),
-            ],
+        // Interactive Animated Brand Coupons
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: _pulseController,
+            builder: (context, child) {
+              final List<Map<String, dynamic>> brands = [
+                {"img": "assets/rewards/swiggy.png", "pos": const Offset(10, 5)},
+                {"img": "assets/rewards/zomato.png", "pos": const Offset(110, 45)},
+                {"img": "assets/rewards/flipkart.png", "pos": const Offset(10, 115)},
+                {"img": "assets/rewards/amazon.png", "pos": const Offset(115, 135)},
+                {"img": "assets/rewards/kfc.png", "pos": const Offset(120, -25)},
+                {"img": "assets/rewards/ajio.png", "pos": const Offset(15, -35)},
+                {"img": "assets/rewards/netflix.png", "pos": const Offset(210, 10)},
+                {"img": "assets/rewards/spotify.png", "pos": const Offset(215, 120)},
+                {"img": "assets/rewards/bookmyshow.png", "pos": const Offset(315, 5)},
+                {"img": "assets/rewards/pvr.png", "pos": const Offset(320, 110)},
+                {"img": "assets/rewards/mcdonalds.png", "pos": const Offset(10, 225)},
+                {"img": "assets/rewards/reliance.png", "pos": const Offset(120, 245)},
+                {"img": "assets/rewards/croma.png", "pos": const Offset(225, 230)},
+                {"img": "assets/rewards/apple.png", "pos": const Offset(330, 215)},
+                {"img": "assets/rewards/mmt.png", "pos": const Offset(220, -35)},
+                {"img": "assets/rewards/goibibo.png", "pos": const Offset(325, -25)},
+              ];
+
+              return Stack(
+                children: brands.asMap().entries.map((entry) {
+                  final int i = entry.key;
+                  final brand = entry.value;
+                  final double angle = (i % 2 == 0 ? 0.15 : -0.15) + (sin(_pulseController.value * 3.14 + i) * 0.05);
+                  final double floatY = sin(_pulseController.value * 3.14 + i) * 10;
+
+                  return Positioned(
+                    top: brand["pos"].dy + floatY,
+                    right: brand["pos"].dx,
+                    child: Transform.rotate(
+                      angle: angle,
+                      child: Container(
+                        width: 90,
+                        height: 55,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 12,
+                              offset: const Offset(4, 4),
+                            ),
+                          ],
+                          border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(9),
+                          child: Stack(
+                            children: [
+                              Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: Image.asset(
+                                    brand["img"].toString(),
+                                    fit: BoxFit.contain,
+                                  ),
+                                ),
+                              ),
+                              // Coupon Notch Effect
+                              Positioned(
+                                left: -5,
+                                top: 20,
+                                child: Container(
+                                  width: 10,
+                                  height: 15,
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? const Color(0xFF064E3B)
+                                        : const Color(0xFF059669),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              );
+            },
           ),
         ),
         
         const Positioned(
           bottom: -20,
           right: -20,
-          child: Icon(Icons.savings_rounded, size: 150, color: Colors.white10),
+          child: IgnorePointer(
+            child: Icon(Icons.savings_rounded, size: 150, color: Colors.white10),
+          ),
+        ),
+
+        Positioned(
+          bottom: 40,
+          left: 20,
+          right: 20,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+              child: Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(isDark ? 0.35 : 0.25),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.25),
+                    width: 1,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            "Enjoy huge discounts",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.5,
+                              height: 1.1,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black.withOpacity(0.4),
+                                  offset: const Offset(0, 2),
+                                  blurRadius: 6,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            "with gift cards from 200+ brands",
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.9),
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black.withOpacity(0.2),
+                                  offset: const Offset(0, 1),
+                                  blurRadius: 3,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton(
+                      onPressed: () {
+                        _tabController.animateTo(2);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: isDark ? const Color(0xFF065F46) : const Color(0xFF059669),
+                        elevation: 8,
+                        shadowColor: Colors.black45,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: const Text(
+                        "Explore",
+                        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       ],
     );
@@ -2512,64 +2981,67 @@ class _DashboardScreenState extends State<DashboardScreen>
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: isDark
-                  ? [const Color(0xFF7C2D12), const Color(0xFF9A3412)]
-                  : [const Color(0xFFEA580C), const Color(0xFFF97316)],
+                  ? [const Color(0xFF083344), const Color(0xFF155E75)]
+                  : [const Color(0xFF0891B2), const Color(0xFF0E7490)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
           ),
         ),
+        // Large Background Image Accent
         Positioned(
-          left: -40,
-          top: -40,
-          child: Icon(Icons.directions_bus_rounded, size: 250, color: Colors.white.withOpacity(0.05)),
+          right: -30,
+          top: -20,
+          child: Opacity(
+            opacity: 0.15,
+            child: Image.asset(
+              "assets/images/train_bus.png",
+              height: 280,
+              fit: BoxFit.contain,
+            ),
+          ),
         ),
+        
         Positioned(
           bottom: 40,
           left: 24,
           right: 24,
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.bolt_rounded, color: Colors.amber, size: 18),
-                        const SizedBox(width: 4),
-                        Text(
-                          "SMART TRAVEL",
-                          style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      "Recharge NCMC Today",
-                      style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: -0.5),
-                    ),
-                    const Text(
-                      "Never run out of balance for your commute",
-                      style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 16),
-                    ElevatedButton(
-                      onPressed: () => _showNcmcRechargeDialog(),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.deepOrange,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: const Text("Recharge Now", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
-                    ),
-                  ],
-                ),
+              Row(
+                children: [
+                  const Icon(Icons.bolt_rounded, color: Colors.amber, size: 18),
+                  const SizedBox(width: 4),
+                  Text(
+                    "SMART TRAVEL",
+                    style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
+                  ),
+                ],
               ),
-              const Icon(Icons.contactless_rounded, size: 100, color: Colors.white24),
+              const SizedBox(height: 12),
+              const Text(
+                "Recharge NCMC Today",
+                style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: -0.5),
+              ),
+              const SizedBox(height: 2),
+              const Text(
+                "Never run out of balance for your commute",
+                style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => _showNcmcRechargeDialog(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: const Color(0xFF0891B2),
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 0),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text("Recharge Now", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+              ),
             ],
           ),
         ),
@@ -2642,68 +3114,87 @@ class _DashboardScreenState extends State<DashboardScreen>
                     decoration: const BoxDecoration(
                       color: Colors.transparent,
                     ),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        PageView.builder(
-                          controller: _headerPageController,
-                          onPageChanged: (index) {
-                            setState(() {
-                              _currentHeaderPage = index % 4;
-                            });
-                          },
-                          itemBuilder: (context, index) {
-                            return AnimatedBuilder(
-                              animation: _headerPageController,
-                              builder: (context, child) {
-                                double value = 1.0;
-                                if (_headerPageController.position.haveDimensions) {
-                                  value = (_headerPageController.page! - index);
-                                  value = (1 - (value.abs() * 0.3)).clamp(0.0, 1.0);
-                                } else {
-                                  // Initial state before first frame
-                                  if (index == _headerPageController.initialPage) {
-                                    value = 1.0;
-                                  } else {
-                                    value = 0.7;
-                                  }
-                                }
+                    child: Builder(
+                      builder: (context) {
+                        final bool isKycNotCompleted = _kycStatus.toLowerCase() != "completed";
+                        final bool isCardNotRequested = _orderStatus == "NOT_REQUESTED";
+                        final bool isNcmcRechargeVisible = _orderStatus == "RECEIVED" && _isPinSet;
+                        
+                        int totalHeaderSlides;
+                        if (isKycNotCompleted) {
+                          totalHeaderSlides = 2;
+                        } else if (isCardNotRequested) {
+                          // Weather, Order, Cashback, Rewards (4 slides, NCMC hidden)
+                          totalHeaderSlides = 4; 
+                        } else {
+                          // KYC done and card ordered. Check if NCMC Recharge should be shown.
+                          totalHeaderSlides = isNcmcRechargeVisible ? 4 : 3;
+                        }
 
-                                return Opacity(
-                                  opacity: value,
-                                  child: Transform.scale(
-                                    scale: value,
-                                    child: child,
-                                  ),
+                        return Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            PageView.builder(
+                              controller: _headerPageController,
+                              onPageChanged: (index) {
+                                setState(() {
+                                  _currentHeaderPage = index % totalHeaderSlides;
+                                });
+                              },
+                              itemBuilder: (context, index) {
+                                return AnimatedBuilder(
+                                  animation: _headerPageController,
+                                  builder: (context, child) {
+                                    double value = 1.0;
+                                    if (_headerPageController.position.haveDimensions) {
+                                      value = (_headerPageController.page! - index);
+                                      value = (1 - (value.abs() * 0.3)).clamp(0.0, 1.0);
+                                    } else {
+                                      // Initial state before first frame
+                                      if (index == _headerPageController.initialPage) {
+                                        value = 1.0;
+                                      } else {
+                                        value = 0.7;
+                                      }
+                                    }
+
+                                    return Opacity(
+                                      opacity: value,
+                                      child: Transform.scale(
+                                        scale: value,
+                                        child: child,
+                                      ),
+                                    );
+                                  },
+                                  child: _buildHeaderSlide(index % totalHeaderSlides, isKycNotCompleted),
                                 );
                               },
-                              child: _buildHeaderSlide(index % 4),
-                            );
-                          },
-                        ),
-                        
-                        // Page Indicators
-                        Positioned(
-                          bottom: 20,
-                          left: 0,
-                          right: 0,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: List.generate(4, (index) {
-                              return AnimatedContainer(
-                                duration: const Duration(milliseconds: 300),
-                                margin: const EdgeInsets.symmetric(horizontal: 4),
-                                height: 6,
-                                width: _currentHeaderPage == index ? 20 : 6,
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(_currentHeaderPage == index ? 0.9 : 0.4),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              );
-                            }),
-                          ),
-                        ),
-                      ],
+                            ),
+                            
+                            // Page Indicators
+                            Positioned(
+                              bottom: 20,
+                              left: 0,
+                              right: 0,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: List.generate(totalHeaderSlides, (index) {
+                                  return AnimatedContainer(
+                                    duration: const Duration(milliseconds: 300),
+                                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                                    height: 6,
+                                    width: _currentHeaderPage == index ? 20 : 6,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(_currentHeaderPage == index ? 0.9 : 0.4),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  );
+                                }),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -2831,14 +3322,452 @@ class _DashboardScreenState extends State<DashboardScreen>
 
 
 
-  Widget _buildHeaderSlide(int index) {
-    switch (index) {
-      case 0: return _buildWeatherAndGreetingSlide();
-      case 1: return _buildCashbackSlide();
-      case 2: return _buildRewardsSlide();
-      case 3: return _buildNcmcRechargeSlide();
-      default: return const SizedBox.shrink();
+  Widget _buildHeaderSlide(int index, bool isKycNotCompleted) {
+    if (isKycNotCompleted) {
+      switch (index) {
+        case 0: return _buildWeatherAndGreetingSlide();
+        case 1: return _buildKycSlide();
+        default: return const SizedBox.shrink();
+      }
+    } else {
+      final bool isCardNotRequested = _orderStatus == "NOT_REQUESTED";
+      final bool isNcmcRechargeVisible = _orderStatus == "RECEIVED" && _isPinSet;
+
+      if (isCardNotRequested) {
+        switch (index) {
+          case 0: return _buildWeatherAndGreetingSlide();
+          case 1: return _buildOrderCardSlide();
+          case 2: return _buildCashbackSlide();
+          case 3: return _buildRewardsSlide();
+          default: return const SizedBox.shrink();
+        }
+      } else {
+        if (isNcmcRechargeVisible) {
+          switch (index) {
+            case 0: return _buildWeatherAndGreetingSlide();
+            case 1: return _buildCashbackSlide();
+            case 2: return _buildRewardsSlide();
+            case 3: return _buildNcmcRechargeSlide();
+            default: return const SizedBox.shrink();
+          }
+        } else {
+          switch (index) {
+            case 0: return _buildWeatherAndGreetingSlide();
+            case 1: return _buildCashbackSlide();
+            case 2: return _buildRewardsSlide();
+            default: return const SizedBox.shrink();
+          }
+        }
+      }
     }
+  }
+
+  Widget _buildKycSlide() {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Background Gradient
+        Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: isDark
+                  ? [const Color(0xFF7F1D1D), const Color(0xFF991B1B)]
+                  : [const Color(0xFFEF4444), const Color(0xFFB91C1C)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+
+        // Interactive Animated Security Icons
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: _pulseController,
+            builder: (context, child) {
+              final List<Map<String, dynamic>> secureIcons = [
+                {"icon": Icons.security_rounded, "pos": const Offset(10, 5)},
+                {"icon": Icons.fingerprint_rounded, "pos": const Offset(110, 45)},
+                {"icon": Icons.face_rounded, "pos": const Offset(10, 115)},
+                {"icon": Icons.vpn_key_rounded, "pos": const Offset(115, 135)},
+                {"icon": Icons.qr_code_scanner_rounded, "pos": const Offset(120, -25)},
+                {"icon": Icons.shield_rounded, "pos": const Offset(15, -35)},
+                {"icon": Icons.verified_user_rounded, "pos": const Offset(210, 10)},
+                {"icon": Icons.lock_rounded, "pos": const Offset(215, 120)},
+                {"icon": Icons.badge_rounded, "pos": const Offset(315, 5)},
+                {"icon": Icons.security_update_good_rounded, "pos": const Offset(320, 110)},
+              ];
+
+              return Stack(
+                children: [
+                  // Pulsing Scan Rings
+                  Center(
+                    child: Container(
+                      width: 300 * _pulseController.value,
+                      height: 300 * _pulseController.value,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white.withOpacity(0.15 * (1 - _pulseController.value)), width: 2),
+                      ),
+                    ),
+                  ),
+                  ...secureIcons.asMap().entries.map((entry) {
+                    final int i = entry.key;
+                    final item = entry.value;
+                    final double angle = (sin(_pulseController.value * 3.14 + i) * 0.1);
+                    final double floatY = sin(_pulseController.value * 3.14 + i) * 15;
+
+                    return Positioned(
+                      top: item["pos"].dy + floatY,
+                      right: item["pos"].dx,
+                      child: Transform.rotate(
+                        angle: angle,
+                        child: Icon(
+                          item["icon"],
+                          size: 40,
+                          color: Colors.white.withOpacity(0.12),
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+              );
+            },
+          ),
+        ),
+        
+        const Positioned(
+          bottom: -20,
+          right: -20,
+          child: IgnorePointer(
+            child: Icon(Icons.verified_user_rounded, size: 150, color: Colors.white10),
+          ),
+        ),
+        
+        Positioned(
+          bottom: 40,
+          left: 20,
+          right: 20,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              child: Container(
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(isDark ? 0.4 : 0.3),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.3),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.security_rounded, color: Colors.white, size: 12),
+                                const SizedBox(width: 4),
+                                const Text(
+                                  "ACTION REQUIRED",
+                                  style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            "Complete KYC",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 26,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.5,
+                              shadows: [Shadow(color: Colors.black26, offset: Offset(0, 2), blurRadius: 4)],
+                            ),
+                          ),
+                          Text(
+                            "Unlock full card features & higher limits",
+                            style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: () {
+                        _tabController.animateTo(1);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFFB91C1C),
+                        elevation: 8,
+                        shadowColor: Colors.black45,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: const Text("Complete KYC", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOrderCardSlide() {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Stack(
+      children: [
+        // Interactive Premium Background
+        Positioned.fill(
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: isDark 
+                    ? [const Color(0xFF78350F), const Color(0xFF92400E), const Color(0xFF451A03)]
+                    : [const Color(0xFFD97706), const Color(0xFFB45309), const Color(0xFF78350F)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+          ),
+        ),
+        
+        // Interactive Animated Delivery/Logistic Icons
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: _pulseController,
+            builder: (context, child) {
+              final List<Map<String, dynamic>> deliveryIcons = [
+                {"icon": Icons.local_shipping_rounded, "pos": const Offset(10, 5)},
+                {"icon": Icons.map_rounded, "pos": const Offset(110, 45)},
+                {"icon": Icons.home_work_rounded, "pos": const Offset(10, 115)},
+                {"icon": Icons.location_on_rounded, "pos": const Offset(115, 135)},
+                {"icon": Icons.explore_rounded, "pos": const Offset(120, -25)},
+                {"icon": Icons.inventory_2_rounded, "pos": const Offset(15, -35)},
+                {"icon": Icons.verified_rounded, "pos": const Offset(210, 10)},
+                {"icon": Icons.route_rounded, "pos": const Offset(215, 120)},
+                {"icon": Icons.delivery_dining_rounded, "pos": const Offset(315, 5)},
+                {"icon": Icons.done_all_rounded, "pos": const Offset(320, 110)},
+              ];
+
+              return Stack(
+                children: [
+                  // Pulsing Delivery Zone Ring
+                  Positioned(
+                    right: -20,
+                    bottom: -20,
+                    child: Container(
+                      width: 250 * _pulseController.value,
+                      height: 250 * _pulseController.value,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.12 * (1 - _pulseController.value)),
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                  ...deliveryIcons.asMap().entries.map((entry) {
+                    final int i = entry.key;
+                    final item = entry.value;
+                    final double floatY = sin(_pulseController.value * 3.14 + i) * 12;
+                    final double angle = (cos(_pulseController.value * 3.14 + i) * 0.08);
+
+                    return Positioned(
+                      top: item["pos"].dy + floatY,
+                      right: item["pos"].dx,
+                      child: Transform.rotate(
+                        angle: angle,
+                        child: Icon(
+                          item["icon"],
+                          size: 38,
+                          color: Colors.white.withOpacity(0.08),
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+              );
+            },
+          ),
+        ),
+
+        // Floating Card Preview (Stylized)
+        Positioned(
+          right: 30,
+          bottom: 75,
+          child: Transform.rotate(
+            angle: -0.15,
+            child: Container(
+              width: 135,
+              height: 85,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF1F2937), Color(0xFF111827), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.5),
+                    blurRadius: 15,
+                    offset: const Offset(6, 12),
+                  ),
+                  BoxShadow(
+                    color: Colors.white.withOpacity(0.05),
+                    blurRadius: 2,
+                    offset: const Offset(-1, -1),
+                  ),
+                ],
+                border: Border.all(color: Colors.white.withOpacity(0.18), width: 1.2),
+              ),
+              child: Stack(
+                children: [
+                   // Glossy Reflector Overlay
+                   Positioned.fill(
+                     child: Container(
+                       decoration: BoxDecoration(
+                         borderRadius: BorderRadius.circular(14),
+                         gradient: LinearGradient(
+                           colors: [Colors.white.withOpacity(0.0), Colors.white.withOpacity(0.03)],
+                           begin: Alignment.topRight,
+                           end: Alignment.bottomLeft,
+                         ),
+                       ),
+                     ),
+                   ),
+                   // Chip
+                   Positioned(
+                     top: 15,
+                     left: 15,
+                     child: Container(
+                       width: 26,
+                       height: 20,
+                       decoration: BoxDecoration(
+                         gradient: const LinearGradient(
+                           colors: [Color(0xFFFDE68A), Color(0xFFF59E0B)],
+                           begin: Alignment.topLeft,
+                           end: Alignment.bottomRight,
+                         ),
+                         borderRadius: BorderRadius.circular(4),
+                         boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 2)],
+                       ),
+                     ),
+                   ),
+                   // Contactless
+                   Positioned(
+                     bottom: 15,
+                     right: 15,
+                     child: Icon(Icons.contactless_rounded, color: Colors.white.withOpacity(0.7), size: 18),
+                   ),
+                   // Logo
+                   Positioned(
+                     top: 15,
+                     right: 15,
+                     child: const Text(
+                       "LUME",
+                       style: TextStyle(
+                         color: Colors.white70,
+                         fontSize: 11,
+                         fontWeight: FontWeight.w900,
+                         letterSpacing: 1.5,
+                       ),
+                     ),
+                   ),
+                ],
+              ),
+            ),
+          ),
+        ),
+
+        // Main Content
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 75), // Push header text more down
+              const Text(
+                "Order Your\nPhysical Card",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 26,
+                  fontWeight: FontWeight.w900,
+                  height: 1.1,
+                  letterSpacing: -0.8,
+                  shadows: [
+                    Shadow(color: Colors.black45, offset: Offset(0, 3), blurRadius: 6),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: MediaQuery.of(context).size.width * 0.52,
+                child: Text(
+                  "Get your contactless Lume card delivered right to your home.",
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.95),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 15), // Move button somewhat up (replacing Spacer)
+              ElevatedButton(
+                onPressed: () {
+                  _showOrderCardFormSheet(context, colorScheme);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: const Color(0xFFB45309),
+                  elevation: 12,
+                  shadowColor: Colors.black.withOpacity(0.4),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text("Order Now", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+                    SizedBox(width: 8),
+                    Icon(Icons.arrow_forward_rounded, size: 16),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildHomeTab(BuildContext context, ColorScheme colorScheme) {
@@ -2860,12 +3789,16 @@ class _DashboardScreenState extends State<DashboardScreen>
             children: [
               const SizedBox(height: 20),
               // Interactive PhonePe-style Card Stack
-              SizedBox(
-                height: 195,
-                width: double.infinity,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  alignment: Alignment.center,
+              Opacity(
+                opacity: _kycStatus.toLowerCase() != "completed" ? 0.4 : 1.0,
+                child: IgnorePointer(
+                  ignoring: _kycStatus.toLowerCase() != "completed",
+                  child: SizedBox(
+                    height: 195,
+                    width: double.infinity,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      alignment: Alignment.center,
                   children: [
                     // Dynamic Depth Swapping: Back card built FIRST
                     if (_isNcmcPrimary) ...[
@@ -2898,6 +3831,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                   ],
                 ),
               ),
+            ),
+          ),
               if (_hasActiveMandates)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
@@ -3166,29 +4101,35 @@ class _DashboardScreenState extends State<DashboardScreen>
                   width: 1.2,
                 ),
               ),
-              child: Stack(
-                children: [
-                  // Pattern Decoration
-                  Positioned(
-                    right: -20,
-                    bottom: -20,
-                    child: Opacity(
-                      opacity: 0.6,
-                      child: CustomPaint(
-                        size: const Size(150, 150),
-                        painter: CardPatternPainter(color: patternColor),
+              child: Opacity(
+                opacity: (isNcmc && _orderStatus != "RECEIVED") ? 0.4 : 1.0,
+                child: IgnorePointer(
+                  ignoring: (isNcmc && _orderStatus != "RECEIVED"),
+                  child: Stack(
+                    children: [
+                      // Pattern Decoration
+                      Positioned(
+                        right: -20,
+                        bottom: -20,
+                        child: Opacity(
+                          opacity: 0.6,
+                          child: CustomPaint(
+                            size: const Size(150, 150),
+                            painter: CardPatternPainter(color: patternColor),
+                          ),
+                        ),
                       ),
-                    ),
+                      
+                      // Card Content
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        child: isNcmc
+                            ? _buildNcmcCardContent(context, colorScheme, isFront, labelColor)
+                            : _buildPrepaidCardContent(context, colorScheme, isFront, labelColor, showAddMoney: true),
+                      ),
+                    ],
                   ),
-                  
-                  // Card Content
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                    child: isNcmc
-                        ? _buildNcmcCardContent(context, colorScheme, isFront, labelColor)
-                        : _buildPrepaidCardContent(context, colorScheme, isFront, labelColor, showAddMoney: true),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -3224,9 +4165,11 @@ class _DashboardScreenState extends State<DashboardScreen>
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               GestureDetector(
-                onTap: () => setState(() => _isBalanceVisible = !_isBalanceVisible),
+                onTap: _kycStatus.toLowerCase() != "completed" 
+                    ? null 
+                    : () => setState(() => _isBalanceVisible = !_isBalanceVisible),
                 child: Text(
-                  _isBalanceVisible
+                  (_kycStatus.toLowerCase() == "completed" && _isBalanceVisible)
                       ? "₹ ${NumberFormat('#,##,##0.00').format(_cardBalance)}"
                       : "₹ • • • • • •",
                   style: TextStyle(
@@ -3284,11 +4227,15 @@ class _DashboardScreenState extends State<DashboardScreen>
           ),
           const SizedBox(height: 4),
           Text(
-            "Available Balance",
+            _kycStatus.toLowerCase() == "completed" 
+                ? "Available Balance" 
+                : "Complete KYC to Unlock",
             style: TextStyle(
               fontSize: 13,
-              color: isDark ? Colors.white.withOpacity(0.5) : Colors.black.withOpacity(0.4),
-              fontWeight: FontWeight.w500,
+              color: _kycStatus.toLowerCase() == "completed"
+                  ? (isDark ? Colors.white.withOpacity(0.5) : Colors.black.withOpacity(0.4))
+                  : (isDark ? Colors.redAccent.withOpacity(0.8) : Colors.red.withOpacity(0.7)),
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -3345,7 +4292,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     GestureDetector(
-                      onTap: () async {
+                      onTap: _kycStatus.toLowerCase() != "completed" 
+                        ? null 
+                        : () async {
                         final wasHidden = !_isNcmcBalanceVisible;
                         setState(() {
                           _isNcmcBalanceVisible = !_isNcmcBalanceVisible;
@@ -3366,7 +4315,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                         }
                       },
                       child: Text(
-                        _isNcmcBalanceVisible
+                        (_kycStatus.toLowerCase() == "completed" && _orderStatus == "RECEIVED" && _isNcmcBalanceVisible)
                             ? "₹ ${NumberFormat('#,##,##0.00').format(_ncmcBalance)}"
                             : "₹ • • • • • •",
                         style: TextStyle(
@@ -3380,10 +4329,16 @@ class _DashboardScreenState extends State<DashboardScreen>
                       ),
                     ),
                     Text(
-                      "Last Updated: $formattedUpdate",
+                      _kycStatus.toLowerCase() != "completed"
+                          ? "Complete KYC to Unlock"
+                          : (_orderStatus != "RECEIVED"
+                              ? "Order your Lume Card to Unlock"
+                              : "Last Updated: $formattedUpdate"),
                       style: TextStyle(
                         fontSize: 10,
-                        color: isDark ? Colors.white.withOpacity(0.5) : Colors.black.withOpacity(0.4),
+                        color: (_kycStatus.toLowerCase() == "completed" && _orderStatus == "RECEIVED")
+                            ? (isDark ? Colors.white.withOpacity(0.5) : Colors.black.withOpacity(0.4))
+                            : (isDark ? Colors.redAccent.withOpacity(0.8) : Colors.red.withOpacity(0.7)),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -4380,7 +5335,13 @@ class _DashboardScreenState extends State<DashboardScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildNcmcBalanceStrip(colorScheme),
+              Opacity(
+                opacity: (_kycStatus.toLowerCase() != "completed" || _orderStatus != "RECEIVED") ? 0.4 : 1.0,
+                child: IgnorePointer(
+                  ignoring: (_kycStatus.toLowerCase() != "completed" || _orderStatus != "RECEIVED"),
+                  child: _buildNcmcBalanceStrip(colorScheme),
+                ),
+              ),
               const SizedBox(height: 20),
               _buildNcmcRechargeBanner(colorScheme),
               const SizedBox(height: 35),

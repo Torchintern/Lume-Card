@@ -1,7 +1,42 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
-class NcmcDetailsScreen extends StatelessWidget {
+class NcmcDetailsScreen extends StatefulWidget {
   const NcmcDetailsScreen({super.key});
+
+  @override
+  State<NcmcDetailsScreen> createState() => _NcmcDetailsScreenState();
+}
+
+class _NcmcDetailsScreenState extends State<NcmcDetailsScreen> {
+  late PageController _headerPageController;
+  Timer? _headerAutoScrollTimer;
+  int _currentHeaderPage = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _headerPageController = PageController(initialPage: 400);
+    _startHeaderAutoScroll();
+  }
+
+  void _startHeaderAutoScroll() {
+    _headerAutoScrollTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
+      if (_headerPageController.hasClients) {
+        _headerPageController.nextPage(
+          duration: const Duration(milliseconds: 1000),
+          curve: Curves.easeInOutCubic,
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _headerAutoScrollTimer?.cancel();
+    _headerPageController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -15,7 +50,7 @@ class NcmcDetailsScreen extends StatelessWidget {
         slivers: [
           // Dynamic Premium Header
           SliverAppBar(
-            expandedHeight: size.height * 0.25,
+            expandedHeight: size.height * 0.32,
             pinned: true,
             stretch: true,
             backgroundColor: colorScheme.primary,
@@ -50,7 +85,7 @@ class NcmcDetailsScreen extends StatelessWidget {
               title: LayoutBuilder(
                 builder: (context, constraints) {
                   final double top = constraints.biggest.height;
-                  final double expandedHeight = size.height * 0.25;
+                  final double expandedHeight = size.height * 0.32;
                   final double collapsedHeight = MediaQuery.of(context).padding.top + kToolbarHeight;
                   final double delta = expandedHeight - collapsedHeight;
                   final double progress = ((top - collapsedHeight) / delta).clamp(0.0, 1.0);
@@ -59,7 +94,7 @@ class NcmcDetailsScreen extends StatelessWidget {
                   
                   return Container(
                     padding: EdgeInsets.only(
-                      left: 25 * (1 - progress) + (20 * progress), // Nudge right when collapsed
+                      left: 25 * progress, 
                       bottom: 25 * progress, 
                     ),
                     alignment: Alignment.lerp(
@@ -82,22 +117,51 @@ class NcmcDetailsScreen extends StatelessWidget {
               background: Stack(
                 fit: StackFit.expand,
                 children: [
+                  PageView.builder(
+                    controller: _headerPageController,
+                    onPageChanged: (index) {
+                      setState(() {
+                        _currentHeaderPage = index % 3;
+                      });
+                    },
+                    itemBuilder: (context, index) {
+                      final int realIndex = index % 3;
+                      return _buildHeaderSlide(realIndex, colorScheme);
+                    },
+                  ),
+
+                  // Overlay Gradient
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
-                        colors: [colorScheme.primary, colorScheme.secondary],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.black.withOpacity(0.35),
+                          Colors.transparent,
+                        ],
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
                       ),
                     ),
                   ),
+
+                  // Indicators
                   Positioned(
-                    bottom: -10,
-                    right: 20,
-                    child: Icon(
-                      Icons.directions_transit_rounded,
-                      size: 110,
-                      color: Colors.white.withValues(alpha: 0.1),
+                    top: MediaQuery.of(context).padding.top + 25,
+                    right: 25,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: List.generate(3, (index) {
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          margin: const EdgeInsets.only(left: 4),
+                          height: 4,
+                          width: _currentHeaderPage == index ? 12 : 4,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(_currentHeaderPage == index ? 0.9 : 0.4),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        );
+                      }),
                     ),
                   ),
                 ],
@@ -210,9 +274,9 @@ class NcmcDetailsScreen extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.05),
+                        color: Colors.red.withAlpha(15),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.red.withOpacity(0.1)),
+                        border: Border.all(color: Colors.red.withAlpha(25)),
                       ),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -237,6 +301,96 @@ class NcmcDetailsScreen extends StatelessWidget {
                   ],
                 ),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeaderSlide(int index, ColorScheme colorScheme) {
+    switch (index) {
+      case 0:
+        return _buildSlideBase(
+          color1: colorScheme.primary,
+          color2: colorScheme.secondary,
+          icon: Icons.directions_transit_rounded,
+          title: "Transit Ready",
+          subtitle: "Use one card for all your metro, bus, and parking needs across India.",
+        );
+      case 1:
+        return _buildSlideBase(
+          color1: const Color(0xFF1E1B4B),
+          color2: const Color(0xFF4338CA),
+          icon: Icons.sync_rounded,
+          title: "Offline Sync",
+          subtitle: "Balance is safely stored on your card chip for ultra-fast offline entry.",
+        );
+      case 2:
+        return _buildSlideBase(
+          color1: const Color(0xFF0F172A),
+          color2: const Color(0xFF334155),
+          icon: Icons.account_balance_wallet_rounded,
+          title: "Dual Wallet",
+          subtitle: "Separated funds for transit and shopping for better money management.",
+        );
+      default:
+        return Container(color: colorScheme.primary);
+    }
+  }
+
+  Widget _buildSlideBase({
+    required Color color1,
+    required Color color2,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [color1, color2],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            right: -20,
+            bottom: -20,
+            child: Icon(icon, size: 180, color: Colors.white.withOpacity(0.08)),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(25, 60, 25, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: Colors.white.withOpacity(0.9), size: 32),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: 220,
+                  child: Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
